@@ -3,11 +3,12 @@
 Backtesting suite for NFL spread model using Power Rankings (last-N across seasons).
 
 For a given season (default: last completed), iterates weeks 1-18 and:
- - Builds power rankings from prior data only (previous season + weeks < current)
+ - Builds power rankings from prior data only (previous season + prior weeks of current season)
  - Computes projected spreads (HFA configurable)
- - Fetches market lines and final results from ESPN
+ - Uses historical ESPN season data (not current-week endpoints) to avoid leakage
+ - Fetches market lines and final results from the same historical season dataset
  - Evaluates ATS accuracy and error metrics
- - Exports per-game CSV and a summary CSV/HTML
+ - Exports per-game CSV and a summary CSV and HTML
 
 Usage examples:
   python -m backtest.backtest_spreads --season 2024 --last-n 17 --hfa 2.0 --output ./backtests
@@ -17,7 +18,7 @@ import argparse
 import os
 import sys
 import csv
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime, timezone
 
 from power_ranking.power_ranking.api.espn_client import ESPNClient
@@ -30,8 +31,16 @@ def ensure_dir(path: str) -> str:
     return p
 
 
-def fetch_week_data(client: ESPNClient, season: int, week: int) -> Dict[str, Any]:
-    return client.get_scoreboard(week=week, season=season)
+def get_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+    """Fetch all regular-season events for a given season with week_number annotation."""
+    data = client.get_season_final_rankings(season)
+    return data.get('events', []) or []
+
+def get_prev_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+    try:
+        return client.get_season_final_rankings(season - 1).get('events', []) or []
+    except Exception:
+        return client.get_last_season_final_rankings().get('events', []) or []
 
 
 def fetch_market_from_competition(comp: Dict[str, Any], home_abbr: str, away_abbr: str, hfa: float) -> Tuple[Any, Any]:
@@ -76,9 +85,9 @@ def fetch_market_from_competition(comp: Dict[str, Any], home_abbr: str, away_abb
     return market_spread, market_line
 
 
-def extract_matchups(week_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    games = []
-    for event in week_data.get('events', []) or []:
+def extract_matchups_from_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    games: List[Dict[str, Any]] = []
+    for event in events:
         for comp in event.get('competitions', []) or []:
             competitors = comp.get('competitors') or []
             home = next((c for c in competitors if c.get('homeAway') == 'home'), None)
@@ -102,22 +111,25 @@ def extract_matchups(week_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return games
 
 
-def build_training_events(client: ESPNClient, season: int, up_to_week_exclusive: int) -> List[Dict[str, Any]]:
-    # Prior season full
-    try:
-        prev = client.get_season_final_rankings(season - 1)
-    except Exception:
-        prev = client.get_last_season_final_rankings()
-    events = list(prev.get('events', []) or [])
-    # Current season prior weeks (1..week-1)
-    for w in range(1, up_to_week_exclusive):
-        wd = fetch_week_data(client, season, w)
-        evs = wd.get('events', []) or []
-        # Keep only finals to avoid leakage
-        events.extend([e for e in evs if e.get('status', {}).get('type', {}).get('name') == 'STATUS_FINAL'])
-    # Deduplicate by event id
+def build_training_events(prev_events: List[Dict[str, Any]],
+                          curr_events: List[Dict[str, Any]],
+                          up_to_week_exclusive: int) -> List[Dict[str, Any]]:
+    """Return list of events to train rankings for a given week.
+
+    Includes all previous-season events and current-season events with week_number < target week.
+    Only STATUS_FINAL events are included.
+    """
+    events: List[Dict[str, Any]] = []
+    events.extend([e for e in prev_events if e.get('status', {}).get('type', {}).get('name') == 'STATUS_FINAL'])
+    for e in curr_events:
+        wk = e.get('week_number') or e.get('week', {}).get('number')
+        if not wk or wk >= up_to_week_exclusive:
+            continue
+        if e.get('status', {}).get('type', {}).get('name') == 'STATUS_FINAL':
+            events.append(e)
+    # Deduplicate
     seen = set()
-    unique = []
+    unique: List[Dict[str, Any]] = []
     for e in events:
         eid = str(e.get('id'))
         if eid in seen:
@@ -147,6 +159,18 @@ def main():
     # Fetch team list (for names mapping if needed)
     teams = client.get_teams()
 
+    # Fetch season datasets once (historical, stable)
+    curr_events = get_season_events(client, args.season)
+    prev_events = get_prev_season_events(client, args.season)
+
+    # Partition current season events by week for evaluation
+    weeks: Dict[int, List[Dict[str, Any]]] = {}
+    for e in curr_events:
+        wk = e.get('week_number') or e.get('week', {}).get('number')
+        if not isinstance(wk, int):
+            continue
+        weeks.setdefault(wk, []).append(e)
+
     model = PowerRankModel()
     total_games = 0
     correct = 0
@@ -162,13 +186,13 @@ def main():
         ])
 
         for week in range(1, 19):
-            week_data = fetch_week_data(client, args.season, week)
-            games = extract_matchups(week_data)
+            week_events = weeks.get(week, [])
+            games = extract_matchups_from_events(week_events)
             if not games:
                 continue
 
             # Build training set from historical data (no data from current week)
-            merged_events = build_training_events(client, args.season, week)
+            merged_events = build_training_events(prev_events, curr_events, week)
             scoreboard_like = {'events': merged_events, 'week': {'number': week}, 'season': {'year': args.season}}
 
             rankings, comp = model.compute(scoreboard_like, teams, last_n_games=args.last_n)
@@ -234,11 +258,34 @@ def main():
             (f"{(sum(mae_actual)/len(mae_actual)):.2f}" if mae_actual else '')
         ])
 
+    # Build HTML summary
+    html_path = os.path.join(out_dir, f'backtest_summary_{args.season}_{ts}.html')
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write("<!DOCTYPE html>\n<html><head><meta charset='utf-8'><title>Backtest Summary</title>\n"
+                "<style>body{font-family:Arial;margin:20px} table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:6px} th{background:#f3f3f3}</style>\n"
+                "</head><body>\n")
+        f.write(f"<h1>Backtest Summary - Season {args.season}</h1>")
+        # Summary table
+        ats_losses = max(total_games - correct - pushes, 0)
+        ats_win_pct = (correct / max(total_games, 1)) if total_games else 0.0
+        f.write("<h2>Overview</h2>")
+        f.write("<table><tr><th>Games</th><th>Pushes</th><th>ATS Wins</th><th>ATS Losses</th><th>ATS Win %</th><th>MAE vs Market</th><th>MAE vs Actual</th></tr>")
+        f.write("<tr>" +
+                f"<td>{total_games}</td><td>{pushes}</td><td>{correct}</td><td>{ats_losses}</td>" +
+                f"<td>{ats_win_pct:.3f}</td>" +
+                f"<td>{(sum(mae_market)/len(mae_market)):.2f}" if mae_market else "<td></td>" +
+                f"<td>{(sum(mae_actual)/len(mae_actual)):.2f}" if mae_actual else "<td></td>" +
+                "</tr></table>")
+        # Link to CSVs
+        f.write("<h3>Artifacts</h3>")
+        f.write(f"<p>Per-game CSV: {per_game_csv}<br>Summary CSV: {summary_csv}</p>")
+        f.write("</body></html>")
+
     print(f"Backtest complete for {args.season}")
     print(f"Per-game CSV: {per_game_csv}")
     print(f"Summary CSV:  {summary_csv}")
+    print(f"Summary HTML: {html_path}")
 
 
 if __name__ == '__main__':
     sys.exit(main())
-
