@@ -141,6 +141,99 @@ class ESPNClient:
         except Exception as e:
             logger.error(f"Failed to fetch 2024 season data: {e}")
             return self._get_sample_season_data()
+
+    # --------- Generic season helpers (non-2024 specific) ----------
+    def get_last_completed_season(self) -> int:
+        """Return the most recently completed NFL regular season year.
+
+        For practical purposes, treat the last completed season as current_year - 1.
+        """
+        try:
+            from datetime import datetime
+            return datetime.utcnow().year - 1
+        except Exception:
+            return 2024
+
+    def get_season_final_rankings(self, year: int) -> Dict:
+        """Fetch final rankings data for the specified season year generically.
+
+        Attempts a year-based scoreboard approach and ESPN core API fallback.
+        Returns a structure consistent with get_last_season_final_rankings.
+        """
+        try:
+            games = self._fetch_season_by_year_generic(year)
+            if len(games) < 260:
+                core = self._fetch_season_core_api_generic(year)
+                if len(core) > len(games):
+                    games = core
+            if not games:
+                logger.warning(f"Failed to fetch season {year} generically; using sample data")
+                return self._get_sample_season_data()
+            return {
+                'events': games,
+                'week': {'number': 18},
+                'season': {'year': year},
+                'total_games': len(games)
+            }
+        except Exception as e:
+            logger.error(f"Season {year} fetch error: {e}")
+            return self._get_sample_season_data()
+
+    def _fetch_season_by_year_generic(self, year: int) -> List[Dict]:
+        """Year-based scoreboard approach for any season year."""
+        try:
+            data = self._make_request("sports/football/nfl/scoreboard", {
+                'dates': str(year),
+                'seasontype': '2',
+                'limit': '1000'
+            })
+            events = data.get('events', [])
+            completed_games = [
+                e for e in events
+                if e.get('status', {}).get('type', {}).get('name') == 'STATUS_FINAL'
+                and e.get('season', {}).get('type', 2) == 2
+            ]
+            result = []
+            seen = set()
+            for game in completed_games:
+                gid = game.get('id')
+                if gid in seen:
+                    continue
+                wk = game.get('week', {}).get('number', 1)
+                if 1 <= wk <= 18:
+                    game['week_number'] = wk
+                    result.append(game)
+                    if gid:
+                        seen.add(gid)
+            return result
+        except Exception as e:
+            logger.warning(f"Generic year-based approach failed for {year}: {e}")
+            return []
+
+    def _fetch_season_core_api_generic(self, year: int) -> List[Dict]:
+        """ESPN Core API generic season fetch."""
+        try:
+            core_url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/{year}/types/2/events"
+            response = self.session.get(f"{core_url}?limit=1000", timeout=30)
+            response.raise_for_status()
+            core_data = response.json()
+            items = core_data.get('items', [])
+            games: List[Dict] = []
+            for ref in items:
+                try:
+                    event_response = self.session.get(ref.get('$ref'), timeout=30)
+                    event_data = event_response.json()
+                    if event_data.get('status', {}).get('type', {}).get('name') == 'STATUS_FINAL':
+                        wk = event_data.get('week', {}).get('number', 1)
+                        if 1 <= wk <= 18:
+                            event_data['week_number'] = wk
+                            games.append(event_data)
+                except Exception:
+                    continue
+            return games
+        except Exception as e:
+            logger.warning(f"Core API generic approach failed for {year}: {e}")
+            return []
     
     def _fetch_season_by_year_2024(self) -> List[Dict]:
         """Fetch 2024 season using year-based scoreboard approach (most comprehensive)"""

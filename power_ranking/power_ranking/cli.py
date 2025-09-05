@@ -54,6 +54,7 @@ def main():
     parser.add_argument('--output', help='Directory to save CSV (overrides config)')
     parser.add_argument('--dry-run', action='store_true', help='Run without writing CSV')
     parser.add_argument('--debug', action='store_true', help='Show detailed team metrics for analysis')
+    parser.add_argument('--last-n', type=int, default=17, help='Number of most recent games per team to include (default: 17)')
     
     args = parser.parse_args()
     
@@ -91,9 +92,14 @@ def main():
         use_last_season = False
         last_season_data = None
         try:
-            last_season_data = espn_client.get_last_season_final_rankings()
+            last_year = espn_client.get_last_completed_season()
+            last_season_data = espn_client.get_season_final_rankings(last_year)
         except Exception:
-            last_season_data = None
+            # Fallback to 2024-specific implementation
+            try:
+                last_season_data = espn_client.get_last_season_final_rankings()
+            except Exception:
+                last_season_data = None
 
         if not espn_client.has_current_season_games(week=week):
             logger.info("No completed games found in current season, using last season's final standings...")
@@ -124,7 +130,7 @@ def main():
         # Compute power rankings
         logger.info("Computing power rankings...")
         # Compute power rankings constrained to each team's last 17 games across seasons
-        rankings, computation_data = power_model.compute(scoreboard_data, teams_data, last_n_games=17)
+        rankings, computation_data = power_model.compute(scoreboard_data, teams_data, last_n_games=args.last_n)
         
         if not rankings:
             logger.warning("No rankings computed - unable to fetch game data")
