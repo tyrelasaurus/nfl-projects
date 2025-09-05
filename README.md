@@ -84,6 +84,17 @@ spread = calculator.calculate_spread("KC", "BUF", power_rankings)
 print(f"Predicted spread: KC {spread:+.1f}")
 ```
 
+### CLI Usage
+
+Power Rankings CLI (cross-season last-N games per team):
+```bash
+# Default: last 17 games per team, week autodetected
+python -m power_ranking.power_ranking.cli --dry-run
+
+# Specify week and window size
+python -m power_ranking.power_ranking.cli --week 1 --last-n 17
+```
+
 ## 📊 System Capabilities
 
 ### **Phase 1: Core Infrastructure** ✅ Complete

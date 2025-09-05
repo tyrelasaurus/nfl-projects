@@ -10,38 +10,51 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic Usage
+### Basic Usage (CLI)
 ```bash
-python cli.py
+python -m power_ranking.power_ranking.cli
 ```
 
 When no current season games are available (e.g., during the off-season), the application automatically generates initial power rankings based on the complete previous season data (all 272 regular season games).
 
 ### Debug Mode (Detailed Team Analysis)
 ```bash
-python cli.py --debug
+python -m power_ranking.power_ranking.cli --debug
 ```
 
 Shows detailed team metrics including season stats, rolling 5-week performance, and strength of schedule for key teams.
 
 ### Specify Week
 ```bash
-python cli.py --week 5
+python -m power_ranking.power_ranking.cli --week 5
 ```
 
 ### Dry Run (no file output)
 ```bash
-python cli.py --dry-run
+python -m power_ranking.power_ranking.cli --dry-run
 ```
 
 ### Custom Output Directory
 ```bash
-python cli.py --output ./custom_output
+python -m power_ranking.power_ranking.cli --output ./custom_output
 ```
 
 ### Custom Config File
 ```bash
-python cli.py --config my_config.yaml
+python -m power_ranking.power_ranking.cli --config my_config.yaml
+```
+
+### Last-N Games Per Team (Cross-Season)
+- The model now uses each team's most recent N games across seasons (default N=17).
+- The CLI merges current-season games with the last completed season to build the pool, then selects each team’s last N by timestamp.
+
+Examples:
+```bash
+# Default last 17 games per team (recommended)
+python -m power_ranking.power_ranking.cli --week 1 --last-n 17 --dry-run
+
+# Use a different window (e.g., last 10 games)
+python -m power_ranking.power_ranking.cli --week 3 --last-n 10
 ```
 
 ### Complete Analysis with Full Dataset
@@ -65,7 +78,7 @@ The application automatically exports detailed datasets for head-to-head predict
 When the current NFL season hasn't started yet or has no completed games, the application will:
 
 1. Detect the absence of current season game data
-2. Automatically fetch complete data from the 2024 season (all 272 regular season games)
+2. Automatically fetch complete data from the most recently completed season (all 272 regular season games)
 3. Use multiple collection methods for comprehensive coverage:
    - Date-based API calls for all 18 weeks
    - Extended date ranges for Thursday/Monday games  
