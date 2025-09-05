@@ -221,6 +221,10 @@ def run_winners_for_season(season: int, last_n: int, hfa: float, out_dir: str) -
         'wins': wins,
         'losses': losses,
         'accuracy': acc,
+        'covered_yes': covered_yes,
+        'covered_no': covered_no,
+        'covered_push': covered_push,
+        'cover_rate': cov_rate,
         'per_game_csv': per_game_csv,
     }, per_game_csv, per_season_html
 
@@ -278,7 +282,7 @@ def main():
         f.write("<h1>Winners Backtests (Aggregate)</h1>")
         # Per-season summary + links
         f.write("<div class='section'><h2>Per-Season Summary</h2>")
-        f.write("<table><tr><th>Season</th><th>Games</th><th>Pushes</th><th>Wins</th><th>Losses</th><th>Accuracy</th><th>CSV</th><th>HTML</th></tr>")
+        f.write("<table><tr><th>Season</th><th>Games</th><th>Pushes</th><th>Wins</th><th>Losses</th><th>Accuracy</th><th>Covered Yes</th><th>Covered No</th><th>Covered Push</th><th>Cover Rate</th><th>CSV</th><th>HTML</th></tr>")
         for r in records:
             f.write("<tr>" +
                     f"<td>{r['season']}</td>" +
@@ -287,6 +291,10 @@ def main():
                     f"<td>{r['wins']}</td>" +
                     f"<td>{r['losses']}</td>" +
                     f"<td>{r['accuracy']:.3f}</td>" +
+                    f"<td>{r.get('covered_yes', '')}</td>" +
+                    f"<td>{r.get('covered_no', '')}</td>" +
+                    f"<td>{r.get('covered_push', '')}</td>" +
+                    f"<td>{r.get('cover_rate', 0):.3f}</td>" +
                     f"<td>{r['per_game_csv']}</td>" +
                     f"<td>{r.get('per_game_html','')}</td>" +
                     "</tr>")
