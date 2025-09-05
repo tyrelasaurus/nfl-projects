@@ -157,6 +157,7 @@ cache/
 backups/
 temp/
 tmp/
+backtests/
 
 # API keys and secrets (if any)
 *.key

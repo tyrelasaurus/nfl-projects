@@ -64,6 +64,19 @@ python run_complete_analysis.py
 
 Runs analysis using the verified 272-game dataset with comprehensive data export.
 
+### Tuned Weights (Default)
+- Based on multi-season sweeps, the default weights are season-heavy:
+  - `season_avg_margin: 0.55`
+  - `rolling_avg_margin: 0.20`
+  - `sos: 0.20`
+  - `recency_factor: 0.05`
+
+### Calibration Parameters
+- The runner reads `calibration/params.yaml` for:
+  - `calibration.margin.a` and `calibration.margin.b` (applied to spreads in reports)
+  - `model.hfa` (home field advantage)
+  - `model.weights` (optional override used by the runner when present)
+
 ## Comprehensive Data Export
 
 The application automatically exports detailed datasets for head-to-head predictive modeling:

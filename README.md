@@ -95,6 +95,22 @@ python -m power_ranking.power_ranking.cli --dry-run
 python -m power_ranking.power_ranking.cli --week 1 --last-n 17
 ```
 
+### Calibration & Backtests
+- Calibrate margin scaling (a,b) and HFA from winners backtests:
+  - `python -m calibration.calibrate_margins --inputs backtests/backtest_winners_*.csv --write`
+  - `python -m calibration.tune_hfa --inputs backtests/backtest_winners_*.csv --hfa-used 2.0 --write`
+  - Parameters saved in `calibration/params.yaml` and used by the runner.
+- Winners backtests (multi-season):
+  - `python -m backtest.backtest_winners_multi --seasons 2021-2024 --last-n 17 --hfa $(python -c "import yaml;print(yaml.safe_load(open('calibration/params.yaml'))['model']['hfa'])") --output ./backtests`
+  - Open central index: `backtests/backtest_winners_index_*.html` (filters: season, week, team, position, predicted side, coverage)
+- Hyperparameter sweep (last-N & weights):
+  - `python -m calibration.sweep_params --seasons 2021-2024 --use-calibration --output ./backtests`
+  - Open `backtests/sweep_params_*.html` to compare configs.
+
+### What’s Tuned by Default
+- Weights (season-heavy): `season_avg_margin=0.55, rolling_avg_margin=0.20, sos=0.20, recency_factor=0.05`
+- HFA and margin scaling are read from `calibration/params.yaml` when present; runner outputs show both raw and calibrated spreads.
+
 ## 📊 System Capabilities
 
 ### **Phase 1: Core Infrastructure** ✅ Complete
