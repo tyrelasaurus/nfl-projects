@@ -13,7 +13,7 @@ import logging
 
 # Add project root to path for exception imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from .exceptions import NFLModelError, ModelConfigurationError
+from exceptions import NFLModelError, ModelConfigurationError
 
 logger = logging.getLogger(__name__)
 

@@ -11,9 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import logging
 
-# Add project root to path for exception imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from exceptions import ConfigurationError
+# Import from power_ranking exceptions
+from .exceptions import ConfigurationError
 
 logger = logging.getLogger(__name__)
 

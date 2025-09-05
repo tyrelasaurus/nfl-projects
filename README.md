@@ -31,7 +31,7 @@ Point spread prediction using Billy Walters methodology:
 ### Installation
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/tyrelasaurus/nfl-projects.git
 cd nfl-projects
 
 # Install dependencies

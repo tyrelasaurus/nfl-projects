@@ -7,9 +7,8 @@ from dataclasses import dataclass
 import os
 import sys
 
-# Add project root to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_manager import get_config
+# Import from power_ranking config_manager
+from power_ranking.config_manager import get_config
 
 logger = logging.getLogger(__name__)
 
