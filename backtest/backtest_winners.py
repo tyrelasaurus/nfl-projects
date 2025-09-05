@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""
+Backtesting winners (no market odds): Evaluates the model's ability to predict
+game winners using power rankings-derived projected margins.
+
+Methodology:
+- For season S (default: last completed):
+  - For each week w=1..18:
+    - Train on: season S-1 full + season S weeks < w (STATUS_FINAL only).
+    - Compute power scores with last-N games per team across seasons.
+    - For each game in week w (STATUS_FINAL):
+      - Project margin = (home_power - away_power) + HFA.
+      - Predict winner (home if margin>0, away if margin<0, tie if 0).
+      - Compare to actual winner (home_score - away_score).
+- Outputs:
+  - Per-game CSV with predicted vs actual and correctness.
+  - Summary CSV and HTML with accuracy.
+
+Usage:
+  python -m backtest.backtest_winners --season 2024 --last-n 17 --hfa 2.0 --output ./backtests
+"""
+
+import argparse
+import os
+import sys
+import csv
+from typing import Dict, List, Tuple, Any
+from datetime import datetime, timezone
+
+from power_ranking.power_ranking.api.espn_client import ESPNClient
+from power_ranking.power_ranking.models.power_rankings import PowerRankModel
+
+
+def ensure_dir(path: str) -> str:
+    p = os.path.abspath(os.path.expanduser(path))
+    os.makedirs(p, exist_ok=True)
+    return p
+
+
+def get_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+    data = client.get_season_final_rankings(season)
+    return data.get('events', []) or []
+
+
+def get_prev_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+    try:
+        return client.get_season_final_rankings(season - 1).get('events', []) or []
+    except Exception:
+        return client.get_last_season_final_rankings().get('events', []) or []
+
+
+def extract_games_from_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    games: List[Dict[str, Any]] = []
+    for event in events:
+        for comp in event.get('competitions', []) or []:
+            competitors = comp.get('competitors') or []
+            home = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+            away = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+            if not home or not away:
+                continue
+            games.append({
+                'event_id': str(event.get('id')),
+                'home_id': str(home.get('team', {}).get('id')),
+                'away_id': str(away.get('team', {}).get('id')),
+                'home_abbr': home.get('team', {}).get('abbreviation'),
+                'away_abbr': away.get('team', {}).get('abbreviation'),
+                'home_name': home.get('team', {}).get('displayName'),
+                'away_name': away.get('team', {}).get('displayName'),
+                'home_score': int(home.get('score', 0) or 0),
+                'away_score': int(away.get('score', 0) or 0),
+                'status': event.get('status', {}).get('type', {}).get('name'),
+                'date': (event.get('date') or '').split('T')[0],
+                'week': event.get('week_number') or event.get('week', {}).get('number'),
+            })
+    return games
+
+
+def build_training_events(prev_events: List[Dict[str, Any]],
+                          curr_events: List[Dict[str, Any]],
+                          up_to_week_exclusive: int) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    events.extend([e for e in prev_events if e.get('status', {}).get('type', {}).get('name') == 'STATUS_FINAL'])
+    for e in curr_events:
+        wk = e.get('week_number') or e.get('week', {}).get('number')
+        if not wk or wk >= up_to_week_exclusive:
+            continue
+        if e.get('status', {}).get('type', {}).get('name') == 'STATUS_FINAL':
+            events.append(e)
+    # Deduplicate
+    seen = set()
+    unique: List[Dict[str, Any]] = []
+    for e in events:
+        eid = str(e.get('id'))
+        if eid in seen:
+            continue
+        unique.append(e)
+        seen.add(eid)
+    return unique
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Backtest model winner predictions (no market odds)')
+    parser.add_argument('--season', type=int, help='Season year (default: last completed)')
+    parser.add_argument('--last-n', type=int, default=17, help='Last N games per team for power (default: 17)')
+    parser.add_argument('--hfa', type=float, default=2.0, help='Home field advantage (default: 2.0)')
+    parser.add_argument('--output', type=str, default='./backtests', help='Output directory')
+    args = parser.parse_args()
+
+    client = ESPNClient()
+    if not args.season:
+        args.season = client.get_last_completed_season()
+
+    out_dir = ensure_dir(args.output)
+    ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+    per_game_csv = os.path.join(out_dir, f'backtest_winners_{args.season}_{ts}.csv')
+    summary_csv = os.path.join(out_dir, f'backtest_winners_summary_{args.season}_{ts}.csv')
+    summary_html = os.path.join(out_dir, f'backtest_winners_summary_{args.season}_{ts}.html')
+
+    teams = client.get_teams()
+    curr_events = get_season_events(client, args.season)
+    prev_events = get_prev_season_events(client, args.season)
+
+    # Partition by week
+    weeks: Dict[int, List[Dict[str, Any]]] = {}
+    for e in curr_events:
+        wk = e.get('week_number') or e.get('week', {}).get('number')
+        if isinstance(wk, int):
+            weeks.setdefault(wk, []).append(e)
+
+    model = PowerRankModel()
+    total = 0
+    correct = 0
+    pushes = 0
+
+    with open(per_game_csv, 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['season', 'week', 'date', 'home', 'away', 'projected_margin', 'predicted_winner', 'actual_winner', 'correct'])
+
+        for week in range(1, 19):
+            wevents = weeks.get(week, [])
+            games = extract_games_from_events(wevents)
+            if not games:
+                continue
+
+            train_events = build_training_events(prev_events, curr_events, week)
+            sb_like = {'events': train_events, 'week': {'number': week}, 'season': {'year': args.season}}
+            rankings, comp = model.compute(sb_like, teams, last_n_games=args.last_n)
+            powers: Dict[str, float] = comp.get('power_scores', {})
+
+            for g in games:
+                if g['status'] != 'STATUS_FINAL':
+                    continue
+                home_id, away_id = g['home_id'], g['away_id']
+                if home_id not in powers or away_id not in powers:
+                    continue
+                projected = (powers[home_id] - powers[away_id]) + args.hfa
+                actual_margin = g['home_score'] - g['away_score']
+                predicted_winner = 'home' if projected > 0 else 'away' if projected < 0 else 'push'
+                actual_winner = 'home' if actual_margin > 0 else 'away' if actual_margin < 0 else 'push'
+
+                if predicted_winner == 'push' or actual_winner == 'push':
+                    pushes += 1
+                    is_correct = ''
+                else:
+                    is_correct = '1' if predicted_winner == actual_winner else '0'
+                    if is_correct == '1':
+                        correct += 1
+                total += 1
+                w.writerow([
+                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected:+.1f}", predicted_winner, actual_winner, is_correct
+                ])
+
+    # Summary CSV
+    with open(summary_csv, 'w', newline='') as f:
+        w = csv.writer(f)
+        acc = (correct / max(total - pushes, 1)) if total else 0.0
+        w.writerow(['season', 'games', 'pushes', 'wins', 'losses', 'accuracy'])
+        w.writerow([args.season, total, pushes, correct, max(total - pushes - correct, 0), f"{acc:.3f}"])
+
+    # Summary HTML
+    with open(summary_html, 'w', encoding='utf-8') as f:
+        acc = (correct / max(total - pushes, 1)) if total else 0.0
+        f.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Backtest Winners Summary</title>"
+                "<style>body{font-family:Arial;margin:20px} table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:6px} th{background:#f3f3f3}</style>"
+                "</head><body>")
+        f.write(f"<h1>Backtest Winners Summary - Season {args.season}</h1>")
+        f.write("<table><tr><th>Games</th><th>Pushes</th><th>Wins</th><th>Losses</th><th>Accuracy</th></tr>")
+        f.write(f"<tr><td>{total}</td><td>{pushes}</td><td>{correct}</td><td>{max(total - pushes - correct, 0)}</td><td>{acc:.3f}</td></tr></table>")
+        f.write(f"<p>Per-game CSV: {per_game_csv}<br>Summary CSV: {summary_csv}</p>")
+        f.write("</body></html>")
+
+    print(f"Backtest winners complete for {args.season}")
+    print(f"Per-game CSV: {per_game_csv}")
+    print(f"Summary CSV:  {summary_csv}")
+    print(f"Summary HTML: {summary_html}")
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+

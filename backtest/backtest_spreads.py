@@ -85,6 +85,30 @@ def fetch_market_from_competition(comp: Dict[str, Any], home_abbr: str, away_abb
     return market_spread, market_line
 
 
+def build_week_odds_map(client: ESPNClient, season: int, week: int) -> Dict[Tuple[str, str], Tuple[Optional[float], Optional[str]]]:
+    """Build odds map for a given season week using scoreboard (historical) data.
+
+    Returns mapping: event_id -> (market_spread, market_line)
+    """
+    data = client.get_scoreboard(week=week, season=season)
+    odds_map: Dict[Tuple[str, str], Tuple[Optional[float], Optional[str]]] = {}
+    for event in data.get('events', []) or []:
+        for comp in event.get('competitions', []) or []:
+            competitors = comp.get('competitors') or []
+            home = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+            away = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+            if not home or not away:
+                continue
+            home_id = str(home.get('team', {}).get('id'))
+            away_id = str(away.get('team', {}).get('id'))
+            home_abbr = home.get('team', {}).get('abbreviation')
+            away_abbr = away.get('team', {}).get('abbreviation')
+            ms, ml = fetch_market_from_competition(comp, home_abbr, away_abbr, hfa=2.0)
+            if home_id and away_id:
+                odds_map[(home_id, away_id)] = (ms, ml)
+    return odds_map
+
+
 def extract_matchups_from_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     games: List[Dict[str, Any]] = []
     for event in events:
@@ -198,6 +222,9 @@ def main():
             rankings, comp = model.compute(scoreboard_like, teams, last_n_games=args.last_n)
             power_scores: Dict[str, float] = comp.get('power_scores', {})
 
+            # Build week odds map from historical scoreboard
+            odds_map = build_week_odds_map(client, args.season, week)
+
             for g in games:
                 if g['status'] != 'STATUS_FINAL':
                     # Skip non-final (should be all final for completed season)
@@ -209,7 +236,11 @@ def main():
                 home_power = power_scores[home_id]
                 away_power = power_scores[away_id]
                 projected = (home_power - away_power) + args.hfa
-                market_spread, market_line = fetch_market_from_competition(g['comp'], g['home_abbr'], g['away_abbr'], args.hfa)
+                ms_ml = odds_map.get((g['home_id'], g['away_id']))
+                if ms_ml is not None:
+                    market_spread, market_line = ms_ml
+                else:
+                    market_spread, market_line = fetch_market_from_competition(g['comp'], g['home_abbr'], g['away_abbr'], args.hfa)
                 # Actual margin
                 actual_margin = g['home_score'] - g['away_score']
                 # ATS pick and result
