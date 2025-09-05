@@ -291,6 +291,9 @@ class PowerRankModel:
                 include_home = event_id in last_n_filter.get(home_id, set())
                 include_away = event_id in last_n_filter.get(away_id, set())
 
+            # Compute original unweighted margin for W/L accounting once
+            original_margin = home_score - away_score
+
             # Home team stats
             if include_home:
                 team_stats[home_id]['games_played'] += 1
@@ -303,7 +306,6 @@ class PowerRankModel:
                 'points_for': home_score, 'points_against': away_score, 'event_id': game.get('event_id'), 'timestamp': game.get('timestamp', 0)
                 })
                 # Use original margin for win/loss (not weighted margin)
-                original_margin = home_score - away_score
                 if original_margin > 0:
                     team_stats[home_id]['wins'] += 1
                 else:
