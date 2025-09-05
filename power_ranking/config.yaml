@@ -1,9 +1,9 @@
 espn_api_base: "https://site.api.espn.com/apis/site/v2"
 weights:
-  season_avg_margin: 0.5      # Increased - season-long performance most important
-  rolling_avg_margin: 0.25    # Reduced - less emphasis on hot streaks
-  sos: 0.2                    # Maintain - strength of schedule matters  
-  recency_factor: 0.05        # Reduced - limit impact of single games
+  season_avg_margin: 0.55     # Tuned: season-heavy performed best in sweep
+  rolling_avg_margin: 0.20    # Tuned: reduced recency weight
+  sos: 0.20                   # Maintain - strength of schedule matters  
+  recency_factor: 0.05        # Light recency factor
 output_dir: "./output"
 logging:
   level: "INFO"

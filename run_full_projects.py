@@ -48,7 +48,23 @@ def run_power_rankings(week: int | None, last_n: int, output_dir: str) -> Tuple[
     from power_ranking.power_ranking.export.csv_exporter import CSVExporter
 
     client = ESPNClient()
-    model = PowerRankModel()
+    # Load tuned weights if present
+    tuned_weights = None
+    try:
+        with open(os.path.join(os.getcwd(), 'calibration', 'params.yaml'), 'r') as f:
+            cfg = yaml.safe_load(f) or {}
+            w = cfg.get('model', {}).get('weights')
+            if isinstance(w, dict):
+                tuned_weights = {
+                    'season_avg_margin': float(w.get('season_avg_margin', 0.55)),
+                    'rolling_avg_margin': float(w.get('rolling_avg_margin', 0.20)),
+                    'sos': float(w.get('sos', 0.20)),
+                    'recency_factor': float(w.get('recency_factor', 0.05)),
+                }
+    except Exception:
+        tuned_weights = None
+
+    model = PowerRankModel(weights=tuned_weights) if tuned_weights else PowerRankModel()
 
     # Determine week
     if week is None:

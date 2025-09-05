@@ -4,3 +4,8 @@ calibration:
     b: 0.8416165893315926
 model:
   hfa: 1.7000000000000006
+  weights:
+    season_avg_margin: 0.55
+    rolling_avg_margin: 0.20
+    sos: 0.20
+    recency_factor: 0.05
