@@ -273,9 +273,11 @@ def main():
     # HTML index
     with open(index_html, 'w', encoding='utf-8') as f:
         f.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Winners Backtests Index</title>"
-                "<style>body{font-family:Arial;margin:20px} table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:6px} th{background:#f3f3f3}</style>"
+                "<style>body{font-family:Arial;margin:20px} table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:6px} th{background:#f3f3f3} .section{margin-top:24px}</style>"
                 "</head><body>")
         f.write("<h1>Winners Backtests (Aggregate)</h1>")
+        # Per-season summary + links
+        f.write("<div class='section'><h2>Per-Season Summary</h2>")
         f.write("<table><tr><th>Season</th><th>Games</th><th>Pushes</th><th>Wins</th><th>Losses</th><th>Accuracy</th><th>CSV</th><th>HTML</th></tr>")
         for r in records:
             f.write("<tr>" +
@@ -288,7 +290,72 @@ def main():
                     f"<td>{r['per_game_csv']}</td>" +
                     f"<td>{r.get('per_game_html','')}</td>" +
                     "</tr>")
-        f.write("</table></body></html>")
+        f.write("</table></div>")
+
+        # Aggregate per-game table across all seasons with filters
+        f.write("<div class='section'><h2>All Seasons - Per-Game Results</h2>")
+        # Filters
+        season_opts = "".join(f"<option value='{r['season']}'>{r['season']}</option>" for r in records)
+        f.write("<div style='margin:8px 0;'>"
+                f"<label>Season: <select id='fSeason'><option value=''>All</option>{season_opts}</select></label>\n"
+                " <label>Week: <select id='fWeek'><option value=''>All</option>" + "".join(f"<option value='{w}'>{w}</option>" for w in range(1,19)) + "</select></label>\n"
+                " <label>Team: <input id='fTeam' placeholder='ABB or Name' /></label>\n"
+                " <label>Team Position: <select id='fPos'><option value=''>Any</option><option value='home'>Home</option><option value='away'>Away</option></select></label>\n"
+                " <label>Predicted Side: <select id='fPred'><option value=''>Any</option><option value='home'>Home</option><option value='away'>Away</option><option value='push'>Push</option></select></label>\n"
+                " <label>Coverage: <select id='fCov'><option value=''>Any</option><option value='covered'>Covered</option><option value='not'>Not Covered</option><option value='push'>Push</option></select></label>\n"
+                " <button onclick='filterRows()'>Filter</button> <button onclick='resetFilters()'>Reset</button>"
+                "</div>")
+        # JS helpers
+        f.write("<script>function norm(x){return (x||'').toLowerCase()}\n"
+                "function matchesTeam(home,away,hname,aname,t,pos){if(!t)return true;var hm=home.toLowerCase().includes(t)||hname.includes(t);var am=away.toLowerCase().includes(t)||aname.includes(t);if(pos==='home')return hm; if(pos==='away')return am; return hm||am;}\n"
+                "function filterRows(){var s=document.getElementById('fSeason').value;var w=document.getElementById('fWeek').value;var t=norm(document.getElementById('fTeam').value);var p=document.getElementById('fPred').value;var pos=document.getElementById('fPos').value;var cov=document.getElementById('fCov').value;var rows=document.querySelectorAll('#aggResults tr');rows.forEach(function(r){var show=true; if(s && r.dataset.season!==s){show=false;} if(w && r.dataset.week!==w){show=false;} var home=r.dataset.home||''; var away=r.dataset.away||''; var pside=r.dataset.pside||''; var hname=(r.dataset.hname||'').toLowerCase(); var aname=(r.dataset.aname||'').toLowerCase(); var covered=(r.dataset.covered||''); if(t && !matchesTeam(home,away,hname,aname,t,pos)){show=false;} if(p && pside!==p){show=false;} if(cov){ if(cov==='covered' && covered!=='yes') show=false; else if(cov==='not' && covered!=='no') show=false; else if(cov==='push' && covered!=='push') show=false;} r.style.display=show?'':'none';});}\n"
+                "function resetFilters(){document.getElementById('fSeason').value='';document.getElementById('fWeek').value='';document.getElementById('fTeam').value='';document.getElementById('fPred').value='';document.getElementById('fPos').value='';document.getElementById('fCov').value='';filterRows();}\n"
+                "</script>")
+        # Build combined rows
+        import csv as _csv
+        all_rows = []
+        for r in records:
+            try:
+                with open(r['per_game_csv'], 'r') as _pf:
+                    rdr = _csv.DictReader(_pf)
+                    for row in rdr:
+                        all_rows.append({
+                            'season': str(r['season']),
+                            'week': row.get('week',''),
+                            'date': row.get('date',''),
+                            'away': row.get('away',''),
+                            'home': row.get('home',''),
+                            'projected': row.get('projected_margin') or row.get('projected',''),
+                            'actual_margin': row.get('actual_margin',''),
+                            'final_score': row.get('final_score',''),
+                            'covered': (row.get('covered_predicted','') or '').lower(),
+                            'predicted_team': row.get('predicted_team',''),
+                            'actual_team': row.get('actual_team',''),
+                            # We don’t have full names in CSV; fallback to ABBs
+                            'home_name': row.get('home',''),
+                            'away_name': row.get('away',''),
+                        })
+            except Exception:
+                continue
+        # Table
+        f.write("<table><tr><th>Season</th><th>Week</th><th>Date</th><th>Away</th><th>Home</th><th>Projected Margin (Home)</th><th>Actual Margin</th><th>Final Score</th><th>Covered (Predicted)</th><th>Predicted Winner</th><th>Actual Winner</th></tr><tbody id='aggResults'>")
+        for r in sorted(all_rows, key=lambda x: (x['season'], x['week'], x['date'])):
+            pside = 'home' if (str(r['projected']).startswith('+') or (isinstance(r['projected'], str) and r['projected'] and not r['projected'].startswith('-'))) else 'away' if (isinstance(r['projected'], str) and r['projected'].startswith('-')) else 'push'
+            f.write(f"<tr data-season='{r['season']}' data-week='{r['week']}' data-home='{r['home']}' data-away='{r['away']}' data-pside='{pside}' data-hname='{r['home_name']}' data-aname='{r['away_name']}' data-covered='{r['covered']}'>" +
+                    f"<td>{r['season']}</td>" +
+                    f"<td>{r['week']}</td>" +
+                    f"<td>{r['date']}</td>" +
+                    f"<td>{r['away']}</td>" +
+                    f"<td>{r['home']}</td>" +
+                    f"<td>{r['projected']}</td>" +
+                    f"<td>{r['actual_margin']}</td>" +
+                    f"<td>{r['final_score']}</td>" +
+                    f"<td>{r['covered'].capitalize()}</td>" +
+                    f"<td>{r['predicted_team']}</td>" +
+                    f"<td>{r['actual_team']}</td>" +
+                    "</tr>")
+        f.write("</tbody></table></div>")
+        f.write("</body></html>")
 
     print("Aggregate winners backtests complete")
     print(f"Seasons: {', '.join(map(str,seasons))}")
