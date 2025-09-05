@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import logging
 from typing import Dict, List, Tuple, Any, Optional
+from datetime import datetime
 from collections import defaultdict
 from dataclasses import dataclass
 import os
@@ -98,7 +99,7 @@ class PowerRankModel:
         self.rolling_window = self.config.model.rolling_window
         self.week18_weight = self.config.model.week18_weight
     
-    def compute(self, scoreboard_data: Dict, teams_info: List[Dict]) -> Tuple[List[Tuple[str, str, float]], Dict[str, Any]]:
+    def compute(self, scoreboard_data: Dict, teams_info: List[Dict], last_n_games: Optional[int] = None) -> Tuple[List[Tuple[str, str, float]], Dict[str, Any]]:
         """
         Compute comprehensive power rankings from ESPN scoreboard data.
         
@@ -142,10 +143,15 @@ class PowerRankModel:
         
         # Apply Week 18 weighting to games
         weighted_games = self._apply_game_weights(game_results)
+
+        # If requested, restrict calculations to each team's last N games using event timestamps
+        last_n_filter = None
+        if last_n_games and last_n_games > 0:
+            last_n_filter = self._build_last_n_filter(weighted_games, last_n_games)
         
         # Calculate comprehensive season statistics with weighted games
-        season_stats = self._calculate_season_stats(weighted_games)
-        rolling_stats = self._calculate_rolling_stats(weighted_games, self.rolling_window)
+        season_stats = self._calculate_season_stats(weighted_games, last_n_filter=last_n_filter)
+        rolling_stats = self._calculate_rolling_stats(weighted_games, self.rolling_window, last_n_filter=last_n_filter)
         sos_scores = self._calculate_comprehensive_sos(weighted_games, season_stats)
         
         # Calculate final power scores using layered approach
@@ -164,7 +170,8 @@ class PowerRankModel:
             'rolling_stats': rolling_stats, 
             'sos_scores': sos_scores,
             'teams_map': teams_map,
-            'power_scores': power_scores
+            'power_scores': power_scores,
+            'last_n_games': last_n_games or 0
         }
         
         return rankings, computation_data
@@ -214,6 +221,15 @@ class PowerRankModel:
                 
             # Extract week number from event or use default
             week_number = event.get('week_number', scoreboard_data.get('week', {}).get('number', 1))
+            # Extract event id and date timestamp if available
+            event_id = str(event.get('id', ''))
+            raw_date = event.get('date') or event.get('startDate')
+            ts = 0
+            if raw_date:
+                try:
+                    ts = int(datetime.fromisoformat(str(raw_date).replace('Z', '+00:00')).timestamp())
+                except Exception:
+                    ts = 0
                 
             competitions = event.get('competitions', [])
             for comp in competitions:
@@ -234,17 +250,19 @@ class PowerRankModel:
                 
                 if home_id and away_id:
                     games.append({
+                        'event_id': event_id,
                         'home_team_id': str(home_id),
                         'away_team_id': str(away_id),
                         'home_score': home_score,
                         'away_score': away_score,
                         'margin': home_score - away_score,
-                        'week': week_number
+                        'week': week_number,
+                        'timestamp': ts
                     })
         
         return games
     
-    def _calculate_season_stats(self, games: List[Dict]) -> Dict[str, Dict]:
+    def _calculate_season_stats(self, games: List[Dict], last_n_filter: Optional[Dict[str, set]] = None) -> Dict[str, Dict]:
         """Calculate full season statistics for each team"""
         team_stats = defaultdict(lambda: {
             'games_played': 0,
@@ -265,37 +283,47 @@ class PowerRankModel:
             margin = game['margin']  # This may be weighted
             week = game['week']
             
+            # Home team stats (respect last-n filter if provided)
+            include_home = True
+            include_away = True
+            if last_n_filter is not None:
+                event_id = game.get('event_id')
+                include_home = event_id in last_n_filter.get(home_id, set())
+                include_away = event_id in last_n_filter.get(away_id, set())
+
             # Home team stats
-            team_stats[home_id]['games_played'] += 1
-            team_stats[home_id]['total_margin'] += margin
-            team_stats[home_id]['points_for'] += home_score
-            team_stats[home_id]['points_against'] += away_score
-            team_stats[home_id]['opponents'].append(away_id)
-            team_stats[home_id]['game_details'].append({
-                'week': week, 'opponent': away_id, 'margin': margin, 
-                'points_for': home_score, 'points_against': away_score
-            })
-            # Use original margin for win/loss (not weighted margin)
-            original_margin = home_score - away_score
-            if original_margin > 0:
-                team_stats[home_id]['wins'] += 1
-            else:
-                team_stats[home_id]['losses'] += 1
+            if include_home:
+                team_stats[home_id]['games_played'] += 1
+                team_stats[home_id]['total_margin'] += margin
+                team_stats[home_id]['points_for'] += home_score
+                team_stats[home_id]['points_against'] += away_score
+                team_stats[home_id]['opponents'].append(away_id)
+                team_stats[home_id]['game_details'].append({
+                'week': week, 'opponent': away_id, 'margin': margin,
+                'points_for': home_score, 'points_against': away_score, 'event_id': game.get('event_id'), 'timestamp': game.get('timestamp', 0)
+                })
+                # Use original margin for win/loss (not weighted margin)
+                original_margin = home_score - away_score
+                if original_margin > 0:
+                    team_stats[home_id]['wins'] += 1
+                else:
+                    team_stats[home_id]['losses'] += 1
             
             # Away team stats
-            team_stats[away_id]['games_played'] += 1
-            team_stats[away_id]['total_margin'] -= margin
-            team_stats[away_id]['points_for'] += away_score
-            team_stats[away_id]['points_against'] += home_score
-            team_stats[away_id]['opponents'].append(home_id)
-            team_stats[away_id]['game_details'].append({
-                'week': week, 'opponent': home_id, 'margin': -margin,
-                'points_for': away_score, 'points_against': home_score
-            })
-            if original_margin < 0:
-                team_stats[away_id]['wins'] += 1
-            else:
-                team_stats[away_id]['losses'] += 1
+            if include_away:
+                team_stats[away_id]['games_played'] += 1
+                team_stats[away_id]['total_margin'] -= margin
+                team_stats[away_id]['points_for'] += away_score
+                team_stats[away_id]['points_against'] += home_score
+                team_stats[away_id]['opponents'].append(home_id)
+                team_stats[away_id]['game_details'].append({
+                    'week': week, 'opponent': home_id, 'margin': -margin,
+                    'points_for': away_score, 'points_against': home_score, 'event_id': game.get('event_id'), 'timestamp': game.get('timestamp', 0)
+                })
+                if original_margin < 0:
+                    team_stats[away_id]['wins'] += 1
+                else:
+                    team_stats[away_id]['losses'] += 1
         
         # Calculate derived statistics
         for team_id in team_stats:
@@ -314,22 +342,49 @@ class PowerRankModel:
         
         return dict(team_stats)
     
-    def _calculate_rolling_stats(self, games: List[Dict], window: int) -> Dict[str, Dict]:
-        """Calculate rolling statistics for the last N weeks"""
-        # Sort games by week
+    def _calculate_rolling_stats(self, games: List[Dict], window: int, last_n_filter: Optional[Dict[str, set]] = None) -> Dict[str, Dict]:
+        """Calculate rolling statistics.
+
+        If last_n_filter is provided, compute rolling stats over each team's
+        most recent min(window, last_n) games. Otherwise, fall back to week-based window.
+        """
+        if last_n_filter:
+            # Build per-team filter for last min(window, available) events by timestamp
+            per_team_events: Dict[str, List[Tuple[int, str]]] = {}
+            for g in games:
+                eid = g.get('event_id')
+                ts = g.get('timestamp', 0)
+                per_team_events.setdefault(g['home_team_id'], []).append((ts, eid))
+                per_team_events.setdefault(g['away_team_id'], []).append((ts, eid))
+            rolling_filter: Dict[str, set] = {}
+            for team, seq in per_team_events.items():
+                seq_sorted = sorted(seq, key=lambda x: x[0])
+                keep = {eid for _, eid in seq_sorted[-min(window, len(seq_sorted)):]}  # last window games
+                rolling_filter[team] = keep
+            return self._calculate_season_stats(games, last_n_filter=rolling_filter)
+
+        # Legacy behavior: week-based window
         sorted_games = sorted(games, key=lambda x: x['week'])
-        
-        # Get the latest weeks to focus on (but still apply Week 18 weighting)
         max_week = max(game['week'] for game in games) if games else 18
         target_weeks = list(range(max(1, max_week - window + 1), max_week + 1))
-        
-        # Filter games to rolling window
         recent_games = [g for g in sorted_games if g['week'] in target_weeks]
-        
         logger.info(f"Rolling stats using weeks {target_weeks} ({len(recent_games)} games)")
-        
-        # Calculate stats for recent games only
         return self._calculate_season_stats(recent_games)
+
+    def _build_last_n_filter(self, games: List[Dict], last_n_games: int) -> Dict[str, set]:
+        """Build a per-team set of allowed event_ids for the last N games by timestamp."""
+        per_team: Dict[str, List[Tuple[int, str]]] = {}
+        for g in games:
+            eid = g.get('event_id')
+            ts = g.get('timestamp', 0)
+            per_team.setdefault(g['home_team_id'], []).append((ts, eid))
+            per_team.setdefault(g['away_team_id'], []).append((ts, eid))
+        allowed: Dict[str, set] = {}
+        for team, seq in per_team.items():
+            seq_sorted = sorted(seq, key=lambda x: x[0])
+            keep = {eid for _, eid in seq_sorted[-min(last_n_games, len(seq_sorted)):]}
+            allowed[team] = keep
+        return allowed
     
     def _calculate_comprehensive_sos(self, games: List[Dict], season_stats: Dict[str, Dict]) -> Dict[str, float]:
         """Calculate strength of schedule based on opponent season performance"""

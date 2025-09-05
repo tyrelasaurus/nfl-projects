@@ -116,11 +116,16 @@ class ConfigManager:
     
     def _find_config_file(self) -> str:
         """Find the configuration file in standard locations."""
+        base_dir = os.path.dirname(__file__)
+        repo_root = os.path.abspath(os.path.join(base_dir, os.pardir, os.pardir))
+        package_root = os.path.abspath(os.path.join(base_dir))
         possible_paths = [
             'config_enhanced.yaml',
             'config.yaml',
-            os.path.join(os.path.dirname(__file__), 'config_enhanced.yaml'),
-            os.path.join(os.path.dirname(__file__), 'config.yaml')
+            os.path.join(package_root, 'config_enhanced.yaml'),
+            os.path.join(package_root, 'config.yaml'),
+            # Also check project-level package directory for config.yaml
+            os.path.join(os.path.dirname(package_root), 'config.yaml')
         ]
         
         for path in possible_paths:

@@ -4,10 +4,10 @@ import logging
 import yaml
 import sys
 import os
-from .api.espn_client import ESPNClient
-from .models.power_rankings import PowerRankModel
-from .export.csv_exporter import CSVExporter
-from .export.data_exporter import DataExporter
+from power_ranking.api.espn_client import ESPNClient
+from power_ranking.models.power_rankings import PowerRankModel
+from power_ranking.export.csv_exporter import CSVExporter
+from power_ranking.export.data_exporter import DataExporter
 
 
 def load_config(config_path: str) -> dict:
@@ -22,14 +22,22 @@ def load_config(config_path: str) -> dict:
     except Exception as e:
         logging.warning(f"Failed to load config from {config_path}: {e}")
         # Fallback to package config
-        pkg_default = os.path.join(os.path.dirname(__file__), 'config.yaml')
+        pkg_dir = os.path.dirname(__file__)
+        pkg_default = os.path.join(pkg_dir, 'config.yaml')
         try:
             with open(pkg_default, 'r') as f:
                 logging.info(f"Using package default config: {pkg_default}")
                 return yaml.safe_load(f)
         except Exception as e2:
-            logging.error(f"Failed to load fallback config from {pkg_default}: {e2}")
-            sys.exit(1)
+            # Try project-level package directory (one level up)
+            alt_default = os.path.join(os.path.dirname(pkg_dir), 'config.yaml')
+            try:
+                with open(alt_default, 'r') as f:
+                    logging.info(f"Using alternate default config: {alt_default}")
+                    return yaml.safe_load(f)
+            except Exception as e3:
+                logging.error(f"Failed to load fallback config from {pkg_default} and {alt_default}: {e3}")
+                sys.exit(1)
 
 
 def setup_logging(level: str = "INFO"):
@@ -79,17 +87,44 @@ def main():
         logger.info("Fetching scoreboard data...")
         scoreboard_data = espn_client.get_scoreboard(week=week)
         
-        # Check if current season has games, fallback to last season if not
+        # Check if current season has games, and optionally merge with last season
         use_last_season = False
+        last_season_data = None
+        try:
+            last_season_data = espn_client.get_last_season_final_rankings()
+        except Exception:
+            last_season_data = None
+
         if not espn_client.has_current_season_games(week=week):
             logger.info("No completed games found in current season, using last season's final standings...")
-            scoreboard_data = espn_client.get_last_season_final_rankings()
+            scoreboard_data = last_season_data or scoreboard_data
             use_last_season = True
             week = "Initial (based on 2024 season)"
+        else:
+            # Merge current season week(s) with prior season to enable last-17-games logic
+            if last_season_data and last_season_data.get('events'):
+                merged_ids = set()
+                merged_events = []
+                for ev in (scoreboard_data.get('events') or []):
+                    eid = str(ev.get('id'))
+                    if eid not in merged_ids:
+                        merged_events.append(ev)
+                        merged_ids.add(eid)
+                for ev in (last_season_data.get('events') or []):
+                    eid = str(ev.get('id'))
+                    if eid not in merged_ids:
+                        merged_events.append(ev)
+                        merged_ids.add(eid)
+                scoreboard_data = {
+                    'events': merged_events,
+                    'week': scoreboard_data.get('week') or {'number': week},
+                    'season': scoreboard_data.get('season') or last_season_data.get('season')
+                }
         
         # Compute power rankings
         logger.info("Computing power rankings...")
-        rankings, computation_data = power_model.compute(scoreboard_data, teams_data)
+        # Compute power rankings constrained to each team's last 17 games across seasons
+        rankings, computation_data = power_model.compute(scoreboard_data, teams_data, last_n_games=17)
         
         if not rankings:
             logger.warning("No rankings computed - unable to fetch game data")
