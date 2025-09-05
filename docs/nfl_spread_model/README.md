@@ -58,28 +58,21 @@ from nfl_model.data_loader import DataLoader
 
 # Initialize components
 calculator = SpreadCalculator(home_field_advantage=2.5)
-loader = DataLoader()
+loader = DataLoader("power_rankings.csv", "schedule.csv")
 
 # Load power rankings and schedule
-power_rankings = loader.load_power_rankings("power_rankings.csv")
-schedule = loader.load_schedule("schedule.csv", week=1)
+power_rankings = loader.load_power_rankings()
+week1_df = loader.load_schedule(week=1)
+
+# Normalize to matchup tuples (home, away, date)
+matchups = [(r.home_team, r.away_team, getattr(r, 'game_date', '')) for r in week1_df.itertuples(index=False)]
 
 # Calculate spreads for all week 1 matchups
-predictions = []
-for game in schedule:
-    spread = calculator.calculate_spread(
-        game.home_team, game.away_team, power_rankings
-    )
-    predictions.append({
-        'home_team': game.home_team,
-        'away_team': game.away_team,
-        'spread': spread,
-        'date': game.date
-    })
+results = calculator.calculate_week_spreads(matchups, power_rankings, week=1)
 
 # Display results
-for pred in predictions:
-    print(f"{pred['home_team']} vs {pred['away_team']}: {pred['spread']:+.1f}")
+for r in results:
+    print(f"{r.away_team} @ {r.home_team}: {calculator.format_spread_as_betting_line(r.projected_spread, r.home_team)}")
 ```
 
 ### Advanced Usage with Confidence Intervals
@@ -228,9 +221,16 @@ Data import and processing utilities.
 
 ```python
 class DataLoader:
-    def load_power_rankings(self, filepath: str) -> Dict[str, float]
-    def load_schedule(self, filepath: str, week: int) -> List[ScheduleEntry]
-    def validate_data_compatibility(self, rankings, schedule) -> bool
+    def load_power_rankings(self) -> Dict[str, float]
+    def load_schedule(self, week: int | None = None) -> pd.DataFrame
+    def get_weekly_matchups(self, week: int) -> List[Tuple[str, str, str]]
+    def validate_data_compatibility(self, rankings, matchups) -> Dict[str, Any]
+```
+
+Schedule CSV schema
+- Canonical columns: `week`, `home_team`, `away_team`, optional `game_date`
+- Alternate supported: `home_team_name`/`away_team_name` are auto-normalized
+- Utility: `nfl_model.data_loader.normalize_schedule_dataframe(df)` can validate/normalize a DataFrame
 ```
 
 ### Data Structures

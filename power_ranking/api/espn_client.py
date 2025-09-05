@@ -16,6 +16,27 @@ class ESPNClient:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         
+    # Compatibility wrappers to match documentation/examples
+    def get_teams_data(self):
+        """Compatibility alias for get_teams().
+
+        Returns:
+            List[Dict]: Team objects from ESPN API
+        """
+        return self.get_teams()
+
+    def get_scoreboard_data(self, season: int, week: int):
+        """Compatibility alias for get_scoreboard().
+
+        Args:
+            season (int): Season year (e.g., 2024)
+            week (int): Week number
+
+        Returns:
+            Dict: Scoreboard payload from ESPN API
+        """
+        return self.get_scoreboard(week=week, season=season)
+        
     def _make_request(self, endpoint: str, params: Optional[Dict] = None, retries: int = 3) -> Dict:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         

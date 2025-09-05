@@ -11,9 +11,9 @@ import sys
 import os
 from typing import Optional
 
-from data_loader import DataLoader
-from spread_model import SpreadCalculator
-from exporter import CSVExporter
+from .data_loader import DataLoader
+from .spread_model import SpreadCalculator
+from .exporter import CSVExporter
 
 
 def main():

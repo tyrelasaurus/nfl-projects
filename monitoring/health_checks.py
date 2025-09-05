@@ -16,7 +16,7 @@ import logging
 import traceback
 from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import json
 import os
@@ -66,7 +66,7 @@ class HealthCheckResult:
     component: str
     status: HealthStatus
     message: str
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     response_time_ms: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     
@@ -89,7 +89,7 @@ class SystemHealthStatus:
     components: List[HealthCheckResult] = field(default_factory=list)
     uptime_seconds: float = 0
     system_load: Dict[str, float] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -379,9 +379,17 @@ class HealthChecker:
             )
             
         except Exception as e:
+            # Treat DNS/name resolution and connection errors as degraded rather than outright unhealthy
+            import urllib3
+            import requests as _requests
+            status = HealthStatus.UNHEALTHY
+            if isinstance(e, (_requests.exceptions.ConnectionError, urllib3.exceptions.NameResolutionError)):
+                status = HealthStatus.DEGRADED
+            elif 'NameResolutionError' in str(e) or 'nodename nor servname provided' in str(e):
+                status = HealthStatus.DEGRADED
             return HealthCheckResult(
                 component="api",
-                status=HealthStatus.UNHEALTHY,
+                status=status,
                 message=f"API check failed: {str(e)}",
                 response_time_ms=(time.time() - start_time) * 1000,
                 metadata={'error': str(e)}

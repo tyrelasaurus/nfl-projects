@@ -5,8 +5,8 @@ from power_ranking.models.power_rankings import PowerRankModel
 from nfl_model.spread_model import SpreadCalculator
 import pandas as pd
 
-def test_basic_functionality():
-    """Test basic functionality without external APIs."""
+def run_basic_functionality() -> bool:
+    """Executable helper that returns success for script usage."""
     print("🏈 Simple NFL Projects Test")
     print("=" * 40)
     
@@ -59,12 +59,17 @@ def test_basic_functionality():
         
         power_rankings = loader.load_power_rankings()
         schedule = loader.load_schedule(week=1)
-        spreads = calculator.calculate_week_spreads(schedule, power_rankings, 1)
+        # Convert schedule DataFrame to expected tuple list
+        matchups = [
+            (row['home_team'], row['away_team'], row.get('game_date', ''))
+            for _, row in schedule.iterrows()
+        ]
+        spreads = calculator.calculate_week_spreads(matchups, power_rankings, 1)
         
         print(f"✅ Generated {len(spreads)} spread predictions")
         for result in spreads:
             betting_line = calculator.format_spread_as_betting_line(
-                result.spread, result.home_team, result.away_team
+                result.projected_spread, result.home_team
             )
             print(f"   {result.away_team} @ {result.home_team}: {betting_line}")
         
@@ -86,6 +91,11 @@ def test_basic_functionality():
     print("✅ NFL Projects Suite is ready for use!")
     return True
 
+
+def test_basic_functionality():
+    """Pytest entry that does not return a value."""
+    assert run_basic_functionality() is True
+
 if __name__ == "__main__":
-    success = test_basic_functionality()
+    success = run_basic_functionality()
     exit(0 if success else 1)

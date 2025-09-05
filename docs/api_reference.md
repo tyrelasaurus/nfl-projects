@@ -232,17 +232,21 @@ Loads and processes data for spread calculations.
 
 ```python
 class DataLoader:
-    def load_power_rankings(self, filepath: str) -> Dict[str, float]
-    def load_schedule(self, filepath: str, week: int) -> List[ScheduleEntry]
+    def load_power_rankings(self) -> Dict[str, float]
+    def load_schedule(self, week: int | None = None) -> pd.DataFrame
+    def get_weekly_matchups(self, week: int) -> List[Tuple[str, str, str]]
+    def validate_data_compatibility(self, rankings, matchups) -> Dict[str, Any]
+
+def normalize_schedule_dataframe(df: pd.DataFrame) -> pd.DataFrame
 ```
 
 **Methods:**
 
-##### `load_power_rankings(filepath: str) -> Dict[str, float]`
+##### `load_power_rankings() -> Dict[str, float]`
 Loads power rankings from CSV file.
 
 **Parameters:**
-- `filepath` (str): Path to power rankings CSV file
+- Provided at `DataLoader` initialization
 
 **Returns:**
 - `Dict[str, float]`: Power rankings by team abbreviation
@@ -373,3 +377,8 @@ Both systems implement intelligent caching:
 ---
 
 *This API reference is automatically generated and maintained alongside the codebase. For the latest updates, please refer to the inline documentation in the source code.*
+
+##### Schedule CSV Schema
+- Canonical columns: `week`, `home_team`, `away_team`, optional `game_date`
+- Alternate schema supported: `home_team_name`/`away_team_name` are auto-normalized
+- Use `normalize_schedule_dataframe(df)` to validate/normalize DataFrames

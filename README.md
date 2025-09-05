@@ -22,6 +22,11 @@ Point spread prediction using Billy Walters methodology:
 - Historical backtesting and validation
 - Vegas line comparison and accuracy metrics
 
+Schedule CSV schema (normalized):
+- Columns: `week`, `home_team`, `away_team`, optional `game_date`
+- Alternate supported: `home_team_name`/`away_team_name` are auto-normalized
+- Validate or normalize: use `nfl_model.data_loader.normalize_schedule_dataframe`
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -141,6 +146,11 @@ python -c "from monitoring import HealthChecker; print(HealthChecker().health_ch
 # Run comprehensive system test
 python test_phase_4_2_monitoring.py
 ```
+
+Optional dependency: Flask
+- The simple dashboard server uses Flask. Install it only if you plan to run the web UI.
+- Install with: `python -m pip install -r monitoring/requirements-optional.txt`
+- Or directly: `python -m pip install flask`
 
 ## 📈 Performance Metrics
 

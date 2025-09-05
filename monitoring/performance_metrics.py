@@ -16,7 +16,7 @@ import logging
 import statistics
 from typing import Dict, List, Any, Optional, Callable, Union
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 import json
 import threading
@@ -183,7 +183,7 @@ class MetricsCollector:
         active_connections = len(psutil.net_connections())
         
         snapshot = PerformanceSnapshot(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             memory_usage_mb=memory_usage_mb,
             cpu_percent=cpu_percent,
             disk_io_mb_per_sec=disk_io_rate,
@@ -341,7 +341,7 @@ class MetricsCollector:
     
     def get_historical_metrics(self, hours: int = 24) -> List[Dict[str, Any]]:
         """Get historical performance metrics."""
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         with self._lock:
             return [
@@ -538,7 +538,7 @@ class PerformanceMonitor:
                 logger.error(f"Memory monitor integration error: {e}")
         
         return {
-            'report_generated': datetime.utcnow().isoformat(),
+            'report_generated': datetime.now(timezone.utc).isoformat(),
             'performance_summary': summary,
             'historical_data': historical,
             'integrated_monitoring': integrated_data,

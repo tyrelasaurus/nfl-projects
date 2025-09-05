@@ -4,19 +4,32 @@ import logging
 import yaml
 import sys
 import os
-from api.espn_client import ESPNClient
-from models.power_rankings import PowerRankModel
-from export.csv_exporter import CSVExporter
-from export.data_exporter import DataExporter
+from .api.espn_client import ESPNClient
+from .models.power_rankings import PowerRankModel
+from .export.csv_exporter import CSVExporter
+from .export.data_exporter import DataExporter
 
 
 def load_config(config_path: str) -> dict:
+    """Load YAML config with sensible fallbacks.
+
+    Tries the provided path first; if missing, falls back to the
+    package default config bundled in power_ranking/.
+    """
     try:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
     except Exception as e:
-        logging.error(f"Failed to load config from {config_path}: {e}")
-        sys.exit(1)
+        logging.warning(f"Failed to load config from {config_path}: {e}")
+        # Fallback to package config
+        pkg_default = os.path.join(os.path.dirname(__file__), 'config.yaml')
+        try:
+            with open(pkg_default, 'r') as f:
+                logging.info(f"Using package default config: {pkg_default}")
+                return yaml.safe_load(f)
+        except Exception as e2:
+            logging.error(f"Failed to load fallback config from {pkg_default}: {e2}")
+            sys.exit(1)
 
 
 def setup_logging(level: str = "INFO"):

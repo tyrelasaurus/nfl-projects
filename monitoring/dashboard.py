@@ -19,7 +19,7 @@ Features:
 import json
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import asdict
 from threading import Thread, Event
 import time
@@ -161,7 +161,7 @@ class MonitoringDashboard:
     def _collect_historical_data(self):
         """Collect historical data point for dashboard charts."""
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             
             # Get current system status
             health_status = self.health_checker.check_system_health()
@@ -209,7 +209,7 @@ class MonitoringDashboard:
             
             # Compile dashboard status
             status = {
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'health': health_status.to_dict(),
                 'performance': performance_data,
                 'alerts': {
@@ -229,7 +229,7 @@ class MonitoringDashboard:
         except Exception as e:
             logger.error(f"Error getting system status: {e}")
             return {
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'error': str(e),
                 'status': 'error'
             }
@@ -247,7 +247,7 @@ class MonitoringDashboard:
         try:
             # Filter data by time range if requested
             if hours < 24:  # If less than full dataset
-                cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+                cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
                 filtered_data = {}
                 
                 for key, values in self._historical_data.items():
@@ -327,7 +327,7 @@ class MonitoringDashboard:
                 'success': success,
                 'alert_id': alert_id,
                 'acknowledged_by': user,
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
             
         except Exception as e:
@@ -358,7 +358,7 @@ class MonitoringDashboard:
                 'alert_id': alert_id,
                 'resolved_by': user,
                 'reason': reason,
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
             
         except Exception as e:
@@ -528,7 +528,7 @@ class MonitoringDashboard:
         """
         try:
             dashboard_data = {
-                'export_timestamp': datetime.utcnow().isoformat(),
+                'export_timestamp': datetime.now(timezone.utc).isoformat(),
                 'system_status': self.get_system_status(),
                 'historical_data': self.get_historical_charts_data(),
                 'alert_data': self.get_alert_management_data(),

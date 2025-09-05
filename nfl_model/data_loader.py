@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 
 
 def load_power_rankings(csv_path: str) -> Dict[str, float]:
@@ -45,11 +45,8 @@ def load_schedule(csv_path: str, week: int) -> List[Tuple[str, str, str]]:
     """
     df = pd.read_csv(csv_path)
     
-    # Validate required columns
-    required_columns = ['week', 'home_team', 'away_team']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        raise KeyError(f"Missing required columns: {missing_columns}")
+    # Normalize and validate schema
+    df = normalize_schedule_dataframe(df)
     
     # Filter by week
     week_df = df[df['week'] == week].copy()
@@ -61,6 +58,37 @@ def load_schedule(csv_path: str, week: int) -> List[Tuple[str, str, str]]:
         matchups.append((row['home_team'], row['away_team'], game_date))
     
     return matchups
+
+
+def normalize_schedule_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize schedule DataFrame to canonical schema.
+
+    Canonical columns: ['week', 'home_team', 'away_team', 'game_date' (optional)]
+    Accepts alternate schema with ['home_team_name', 'away_team_name'].
+    Ensures a 'game_date' column exists (filled with '').
+    """
+    # Validate week column
+    if 'week' not in df.columns:
+        raise KeyError("Missing required column: 'week'")
+    
+    # Normalize team columns
+    if 'home_team' not in df.columns and 'home_team_name' in df.columns:
+        df = df.rename(columns={'home_team_name': 'home_team'})
+    if 'away_team' not in df.columns and 'away_team_name' in df.columns:
+        df = df.rename(columns={'away_team_name': 'away_team'})
+    
+    # Final validation
+    required_columns = ['home_team', 'away_team']
+    missing = [c for c in required_columns if c not in df.columns]
+    if missing:
+        raise KeyError(f"Missing required columns: {missing}")
+    
+    # Ensure game_date column exists
+    if 'game_date' not in df.columns:
+        df = df.copy()
+        df['game_date'] = ''
+    
+    return df
 
 
 class PowerRankingsLoader:
@@ -100,20 +128,32 @@ class ScheduleLoader:
         return self._convert_to_tuples(filtered_df)
     
     def _validate_required_columns(self, df: pd.DataFrame) -> None:
-        """Validate that DataFrame has all required columns."""
-        missing_columns = [col for col in self.required_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(f"Missing required columns: {missing_columns}")
+        """Validate that DataFrame has all required columns (accepts alternate schema)."""
+        missing = [col for col in self.required_columns if col not in df.columns]
+        if missing:
+            # Allow alternate schema with *_name columns
+            alt_required = ['week', 'home_team_name', 'away_team_name']
+            if not all(col in df.columns for col in alt_required):
+                raise ValueError(f"Missing required columns: {missing}")
     
     def _filter_by_week(self, df: pd.DataFrame, week: int) -> pd.DataFrame:
         """Filter DataFrame to specific week."""
         return df[df['week'] == week].copy()
     
     def _convert_to_tuples(self, df: pd.DataFrame) -> List[Tuple[str, str, str]]:
-        """Convert DataFrame to list of tuples."""
-        matchups = []
+        """Convert DataFrame to list of (home_team, away_team, game_date) tuples.
+
+        Accepts either ['home_team','away_team'] or ['home_team_name','away_team_name'] schemas.
+        """
+        # Normalize columns if needed
+        if 'home_team' not in df.columns and 'home_team_name' in df.columns:
+            df = df.rename(columns={'home_team_name': 'home_team'})
+        if 'away_team' not in df.columns and 'away_team_name' in df.columns:
+            df = df.rename(columns={'away_team_name': 'away_team'})
+
+        matchups: List[Tuple[str, str, str]] = []
         for _, row in df.iterrows():
-            game_date = row.get('game_date', '')  # Use empty string if missing
+            game_date = row.get('game_date', '')
             matchups.append((row['home_team'], row['away_team'], game_date))
         return matchups
 
@@ -157,7 +197,8 @@ class DataLoader:
             DataFrame with schedule data
         """
         if self._schedule is None:
-            self._schedule = pd.read_csv(self.schedule_path)
+            raw_df = pd.read_csv(self.schedule_path)
+            self._schedule = normalize_schedule_dataframe(raw_df)
         
         if week is not None:
             return self._schedule[self._schedule['week'] == week].copy()
@@ -195,10 +236,26 @@ class DataLoader:
         matchups = []
         
         for _, game in week_schedule.iterrows():
-            matchups.append((
-                game['home_team_name'],
-                game['away_team_name'], 
-                game['game_date']
-            ))
-        
+            home = game['home_team'] if 'home_team' in game else game.get('home_team_name')
+            away = game['away_team'] if 'away_team' in game else game.get('away_team_name')
+            date = game.get('game_date', '')
+            matchups.append((home, away, date))
+
         return matchups
+
+    def validate_data_compatibility(self, power_ratings: Dict[str, float],
+                                    matchups: List[Tuple[str, str, str]]) -> Dict[str, Any]:
+        """Validate that all teams in matchups exist in power_ratings.
+
+        Returns a dict: {'ok': bool, 'missing_teams': List[str]}
+        """
+        missing: List[str] = []
+        for home, away, _ in matchups:
+            if home not in power_ratings:
+                missing.append(home)
+            if away not in power_ratings:
+                missing.append(away)
+        # Deduplicate while preserving order
+        seen = set()
+        missing_unique = [t for t in missing if not (t in seen or seen.add(t))]
+        return {'ok': len(missing_unique) == 0, 'missing_teams': missing_unique}

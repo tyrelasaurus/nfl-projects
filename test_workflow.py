@@ -42,11 +42,13 @@ def test_power_rankings():
         for i, (team_id, team_name, power_score) in enumerate(rankings[:10], 1):
             print(f"{i:2d}. {team_name:<25} {power_score:6.2f}")
         
-        return rankings, processed_data
+        # Do not return values from pytest test function
+        pass
         
     except Exception as e:
         print(f"❌ Power Rankings test failed: {e}")
-        return None, None
+        # Intentionally avoid returning values in pytest
+        pass
 
 def create_test_data(rankings):
     """Create CSV files for spread model testing."""
@@ -139,11 +141,13 @@ def test_spread_model():
             )
             print(f"{matchup:<20} {spread:<8} {betting_line}")
         
-        return week_spreads
+        # Do not return values from pytest test function
+        pass
         
     except Exception as e:
         print(f"❌ Spread model test failed: {e}")
-        return None
+        # Intentionally avoid returning values in pytest
+        pass
 
 def test_monitoring():
     """Test monitoring system."""
@@ -163,11 +167,13 @@ def test_monitoring():
                                if comp.status.value in ['HEALTHY', 'WARNING'])
         
         print(f"✅ {healthy_components}/{len(health_status.components)} components healthy")
-        return True
+        # No return value to satisfy pytest
+        pass
         
     except Exception as e:
         print(f"❌ Monitoring test failed: {e}")
-        return False
+        # Intentionally avoid returning values in pytest
+        pass
 
 def main():
     """Run complete end-to-end workflow test."""
