@@ -1,0 +1,135 @@
+# Enhanced Power Rankings Configuration
+# Comprehensive configuration for all power ranking model parameters
+
+# ESPN API Configuration
+api:
+  base_url: "https://site.api.espn.com/apis/site/v2"
+  timeout_seconds: 30
+  max_retries: 3
+  retry_delay_seconds: 1.0
+  rate_limit_requests_per_second: 2.0
+  
+# Power Ranking Model Weights
+model:
+  weights:
+    season_avg_margin: 0.5      # Season-long performance weight
+    rolling_avg_margin: 0.25    # Recent performance weight
+    sos: 0.2                    # Strength of schedule weight
+    recency_factor: 0.05        # Latest games emphasis weight
+  
+  # Rolling average window for recent performance
+  rolling_window: 5
+  
+  # Week 18 adjustment (games where starters often rest)
+  week18_weight: 0.3
+  
+  # Confidence calculation parameters
+  confidence:
+    default_level: 0.95
+    min_sample_size: 4
+    stability_window: 3
+    
+# Data Validation Configuration  
+validation:
+  data_quality:
+    completeness_thresholds:
+      critical_fields: 1.0      # 100% required
+      important_fields: 0.95    # 95% required  
+      optional_fields: 0.7      # 70% acceptable
+    
+    score_ranges:
+      home_score: [0, 70]
+      away_score: [0, 70]
+      margin: [-50, 50]
+    
+    season_dates:
+      season_start: "2024-09-01"
+      season_end: "2025-02-15"
+    
+    expected_values:
+      teams: 32
+      weeks: 18
+      games_per_week_min: 14
+      games_per_week_max: 16
+    
+    outlier_detection:
+      score_threshold_std: 3.0     # Standard deviations for score outliers
+      margin_threshold_std: 2.5    # Standard deviations for margin outliers
+      
+  anomaly_detection:
+    statistical_thresholds:
+      z_score_threshold: 2.5
+      iqr_multiplier: 1.5
+      rolling_window: 4
+      
+    performance_monitoring:
+      min_correlation_threshold: 0.3
+      variance_spike_threshold: 2.0
+      trend_change_threshold: 0.15
+
+# Output Configuration
+output:
+  directory: "./output"
+  file_formats:
+    csv: true
+    json: true 
+    excel: false
+  
+  csv_options:
+    delimiter: ","
+    encoding: "utf-8"
+    include_index: false
+    
+  naming_convention:
+    include_timestamp: true
+    timestamp_format: "%Y%m%d_%H%M%S"
+    
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_logging:
+    enabled: false
+    filename: "power_rankings.log"
+    max_size_mb: 50
+    backup_count: 5
+    
+# Performance Settings
+performance:
+  enable_caching: true
+  cache_ttl_seconds: 3600
+  parallel_processing: false
+  max_workers: 4
+  memory_limit_mb: 500
+
+# Environment-specific overrides
+environments:
+  development:
+    logging:
+      level: "DEBUG"
+    api:
+      timeout_seconds: 60
+    performance:
+      parallel_processing: false
+      
+  production:
+    logging:
+      level: "WARNING"
+      file_logging:
+        enabled: true
+    api:
+      max_retries: 5
+      rate_limit_requests_per_second: 1.0
+    performance:
+      parallel_processing: true
+      memory_limit_mb: 1000
+      
+  testing:
+    logging:
+      level: "ERROR"
+    validation:
+      data_quality:
+        completeness_thresholds:
+          critical_fields: 0.8  # More lenient for test data
+    api:
+      timeout_seconds: 10
