@@ -206,7 +206,7 @@ def main():
         writer = csv.writer(f)
         writer.writerow([
             'season', 'week', 'date', 'home', 'away',
-            'projected', 'market', 'edge', 'actual_margin', 'covered_predicted',
+            'projected', 'market', 'edge', 'actual_margin', 'away_score', 'home_score', 'final_score', 'covered_predicted',
             'ats_pick', 'ats_result', 'correct'
         ])
 
@@ -282,7 +282,7 @@ def main():
                     f"{projected:+.1f}",
                     (f"{market_spread:+.1f}" if market_spread is not None else ''),
                     (f"{(projected - market_spread):+.1f}" if market_spread is not None else ''),
-                    f"{actual_margin:+.1f}", covered_pred, ats_pick, ats_result, is_correct
+                    f"{actual_margin:+.1f}", g['away_score'], g['home_score'], f"{g['away_score']}-{g['home_score']}", covered_pred, ats_pick, ats_result, is_correct
                 ])
 
     # Summarize
@@ -321,7 +321,7 @@ def main():
         f.write(f"<p>Per-game CSV: {per_game_csv}<br>Summary CSV: {summary_csv}</p>")
         # Per-game table
         f.write("<h2>Per-Game Results</h2>")
-        f.write("<table><tr><th>Week</th><th>Date</th><th>Away</th><th>Home</th><th>Projected</th><th>Market</th><th>Edge</th><th>Actual Margin</th><th>Covered (Predicted)</th><th>ATS Pick</th><th>ATS Result</th><th>Correct</th></tr>")
+        f.write("<table><tr><th>Week</th><th>Date</th><th>Away</th><th>Home</th><th>Projected</th><th>Market</th><th>Edge</th><th>Actual Margin</th><th>Final Score</th><th>Covered (Predicted)</th><th>ATS Pick</th><th>ATS Result</th><th>Correct</th></tr>")
         # Re-read per-game rows to render quickly
         import csv as _csv
         with open(per_game_csv, 'r') as _pf:
@@ -336,6 +336,7 @@ def main():
                         f"<td>{row['market']}</td>" +
                         f"<td>{row['edge']}</td>" +
                         f"<td>{row['actual_margin']}</td>" +
+                        f"<td>{row.get('final_score','')}</td>" +
                         f"<td>{row.get('covered_predicted','')}</td>" +
                         f"<td>{row['ats_pick']}</td>" +
                         f"<td>{row['ats_result']}</td>" +

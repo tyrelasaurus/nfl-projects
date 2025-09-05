@@ -141,7 +141,7 @@ def main():
     with open(per_game_csv, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow([
-            'season', 'week', 'date', 'home', 'away', 'projected_margin', 'actual_margin', 'covered_predicted',
+            'season', 'week', 'date', 'home', 'away', 'projected_margin', 'actual_margin', 'away_score', 'home_score', 'final_score', 'covered_predicted',
             'predicted_winner_side', 'predicted_winner_team', 'actual_winner_side', 'actual_winner_team', 'correct'
         ])
 
@@ -192,7 +192,7 @@ def main():
                         correct += 1
                 total += 1
                 w.writerow([
-                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected:+.1f}", f"{actual_margin:+.1f}", covered,
+                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected:+.1f}", f"{actual_margin:+.1f}", g['away_score'], g['home_score'], f"{g['away_score']}-{g['home_score']}", covered,
                     predicted_winner, predicted_team, actual_winner, actual_team, is_correct
                 ])
                 all_rows.append({
@@ -201,6 +201,10 @@ def main():
                     'date': g['date'],
                     'home': g['home_abbr'],
                     'away': g['away_abbr'],
+                    'home_name': g['home_name'],
+                    'away_name': g['away_name'],
+                    'home_score': g['home_score'],
+                    'away_score': g['away_score'],
                     'projected_margin': projected,
                     'actual_margin': actual_margin,
                     'covered': covered,
@@ -236,26 +240,30 @@ def main():
                 "<label>Week: <select id='fWeek'><option value=''>All</option>" +
                 "".join(f"<option value='{w}'>{w}</option>" for w in range(1,19)) + "</select></label>\n"
                 " <label>Team: <input id='fTeam' placeholder='ABB or Name' /></label>\n"
-                " <label>Predicted Side: <select id='fPred'><option value=''>Any</option><option value='home'>Home</option><option value='away'>Away</option></select></label>\n"
+                " <label>Team Position: <select id='fPos'><option value=''>Any</option><option value='home'>Home</option><option value='away'>Away</option></select></label>\n"
+                " <label>Predicted Side: <select id='fPred'><option value=''>Any</option><option value='home'>Home</option><option value='away'>Away</option><option value='push'>Push</option></select></label>\n"
+                " <label>Coverage: <select id='fCov'><option value=''>Any</option><option value='covered'>Covered</option><option value='not'>Not Covered</option><option value='push'>Push</option></select></label>\n"
                 " <button onclick='filterRows()'>Filter</button> <button onclick='resetFilters()'>Reset</button>"
                 "</div>")
         f.write("<script>function norm(x){return (x||'').toLowerCase()}\n"
-                "function filterRows(){var w=document.getElementById('fWeek').value;var t=norm(document.getElementById('fTeam').value);var p=document.getElementById('fPred').value;var rows=document.querySelectorAll('#results tbody tr');rows.forEach(function(r){var show=true; if(w && r.dataset.week!==w){show=false;} var home=r.dataset.home, away=r.dataset.away, pside=r.dataset.pside, hname=r.dataset.hname, aname=r.dataset.aname; if(t && !(home.toLowerCase().includes(t)||away.toLowerCase().includes(t)||hname.toLowerCase().includes(t)||aname.toLowerCase().includes(t))){show=false;} if(p && pside!==p){show=false;} r.style.display=show?'':'none';});}\n"
-                "function resetFilters(){document.getElementById('fWeek').value='';document.getElementById('fTeam').value='';document.getElementById('fPred').value='';filterRows();}\n"
+                "function matchesTeam(home,away,hname,aname,t,pos){if(!t)return true;var hm=home.toLowerCase().includes(t)||hname.includes(t);var am=away.toLowerCase().includes(t)||aname.includes(t);if(pos==='home')return hm; if(pos==='away')return am; return hm||am;}\n"
+                "function filterRows(){var w=document.getElementById('fWeek').value;var t=norm(document.getElementById('fTeam').value);var p=document.getElementById('fPred').value;var pos=document.getElementById('fPos').value;var cov=document.getElementById('fCov').value;var rows=document.querySelectorAll('#results tr');rows.forEach(function(r){var show=true; if(w && r.dataset.week!==w){show=false;} var home=r.dataset.home||''; var away=r.dataset.away||''; var pside=r.dataset.pside||''; var hname=(r.dataset.hname||'').toLowerCase(); var aname=(r.dataset.aname||'').toLowerCase(); var covered=(r.dataset.covered||''); if(t && !matchesTeam(home,away,hname,aname,t,pos)){show=false;} if(p && pside!==p){show=false;} if(cov){ if(cov==='covered' && covered!=='yes') show=false; else if(cov==='not' && covered!=='no') show=false; else if(cov==='push' && covered!=='push') show=false;} r.style.display=show?'':'none';});}\n"
+                "function resetFilters(){document.getElementById('fWeek').value='';document.getElementById('fTeam').value='';document.getElementById('fPred').value='';document.getElementById('fPos').value='';document.getElementById('fCov').value='';filterRows();}\n"
                 "</script>")
         f.write("<table><tr>" \
                 "<th>Week</th><th>Date</th><th>Away</th><th>Home</th>" \
-                "<th>Projected Margin (Home)</th><th>Actual Margin</th><th>Covered (Predicted)</th>" \
+                "<th>Projected Margin (Home)</th><th>Actual Margin</th><th>Final Score</th><th>Covered (Predicted)</th>" \
                 "<th>Predicted Winner</th><th>Actual Winner</th><th>Correct</th>" \
                 "</tr><tbody id='results'>")
         for row in sorted(all_rows, key=lambda r: (r['week'], r['date'])):
-            f.write(f"<tr data-week='{row['week']}' data-home='{row['home']}' data-away='{row['away']}' data-pside='" + ("home" if row['projected_margin']>0 else ("away" if row['projected_margin']<0 else "push")) + f"' data-hname='{row['predicted_team'] if row['projected_margin']>0 else row['actual_team']}' data-aname='{row['predicted_team'] if row['projected_margin']<0 else row['actual_team']}'>" +
+            f.write(f"<tr data-week='{row['week']}' data-home='{row['home']}' data-away='{row['away']}' data-pside='" + ("home" if row['projected_margin']>0 else ("away" if row['projected_margin']<0 else "push")) + f"' data-hname='{row['home_name']}' data-aname='{row['away_name']}' data-covered='{row['covered'].lower()}'>" +
                     f"<td>{row['week']}</td>" +
                     f"<td>{row['date']}</td>" +
                     f"<td>{row['away']}</td>" +
                     f"<td>{row['home']}</td>" +
                     f"<td>{row['projected_margin']:+.1f}</td>" +
                     f"<td>{row['actual_margin']:+.1f}</td>" +
+                    f"<td>{row['away_score']}-{row['home_score']}</td>" +
                     f"<td>{row['covered']}</td>" +
                     f"<td>{row['predicted_team']}</td>" +
                     f"<td>{row['actual_team']}</td>" +
