@@ -132,9 +132,15 @@ def main():
     correct = 0
     pushes = 0
 
+    # Collect all game rows for HTML
+    all_rows: List[Dict[str, Any]] = []
+
     with open(per_game_csv, 'w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['season', 'week', 'date', 'home', 'away', 'projected_margin', 'predicted_winner', 'actual_winner', 'correct'])
+        w.writerow([
+            'season', 'week', 'date', 'home', 'away', 'projected_margin',
+            'predicted_winner_side', 'predicted_winner_team', 'actual_winner_side', 'actual_winner_team', 'correct'
+        ])
 
         for week in range(1, 19):
             wevents = weeks.get(week, [])
@@ -157,6 +163,8 @@ def main():
                 actual_margin = g['home_score'] - g['away_score']
                 predicted_winner = 'home' if projected > 0 else 'away' if projected < 0 else 'push'
                 actual_winner = 'home' if actual_margin > 0 else 'away' if actual_margin < 0 else 'push'
+                predicted_team = g['home_name'] if predicted_winner == 'home' else g['away_name'] if predicted_winner == 'away' else 'TIE'
+                actual_team = g['home_name'] if actual_winner == 'home' else g['away_name'] if actual_winner == 'away' else 'TIE'
 
                 if predicted_winner == 'push' or actual_winner == 'push':
                     pushes += 1
@@ -167,8 +175,20 @@ def main():
                         correct += 1
                 total += 1
                 w.writerow([
-                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected:+.1f}", predicted_winner, actual_winner, is_correct
+                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected:+.1f}",
+                    predicted_winner, predicted_team, actual_winner, actual_team, is_correct
                 ])
+                all_rows.append({
+                    'season': args.season,
+                    'week': week,
+                    'date': g['date'],
+                    'home': g['home_abbr'],
+                    'away': g['away_abbr'],
+                    'projected_margin': projected,
+                    'predicted_team': predicted_team,
+                    'actual_team': actual_team,
+                    'correct': is_correct == '1'
+                })
 
     # Summary CSV
     with open(summary_csv, 'w', newline='') as f:
@@ -177,7 +197,7 @@ def main():
         w.writerow(['season', 'games', 'pushes', 'wins', 'losses', 'accuracy'])
         w.writerow([args.season, total, pushes, correct, max(total - pushes - correct, 0), f"{acc:.3f}"])
 
-    # Summary HTML
+    # Summary HTML (with full per-game table)
     with open(summary_html, 'w', encoding='utf-8') as f:
         acc = (correct / max(total - pushes, 1)) if total else 0.0
         f.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Backtest Winners Summary</title>"
@@ -187,6 +207,24 @@ def main():
         f.write("<table><tr><th>Games</th><th>Pushes</th><th>Wins</th><th>Losses</th><th>Accuracy</th></tr>")
         f.write(f"<tr><td>{total}</td><td>{pushes}</td><td>{correct}</td><td>{max(total - pushes - correct, 0)}</td><td>{acc:.3f}</td></tr></table>")
         f.write(f"<p>Per-game CSV: {per_game_csv}<br>Summary CSV: {summary_csv}</p>")
+        # Full results table
+        f.write("<h2>Per-Game Results</h2>")
+        f.write("<table><tr>" \
+                "<th>Week</th><th>Date</th><th>Away</th><th>Home</th>" \
+                "<th>Projected Margin (Home)</th><th>Predicted Winner</th><th>Actual Winner</th><th>Correct</th>" \
+                "</tr>")
+        for row in sorted(all_rows, key=lambda r: (r['week'], r['date'])):
+            f.write("<tr>" +
+                    f"<td>{row['week']}</td>" +
+                    f"<td>{row['date']}</td>" +
+                    f"<td>{row['away']}</td>" +
+                    f"<td>{row['home']}</td>" +
+                    f"<td>{row['projected_margin']:+.1f}</td>" +
+                    f"<td>{row['predicted_team']}</td>" +
+                    f"<td>{row['actual_team']}</td>" +
+                    f"<td>{'✅' if row['correct'] else '❌'}</td>" +
+                    "</tr>")
+        f.write("</table>")
         f.write("</body></html>")
 
     print(f"Backtest winners complete for {args.season}")
@@ -197,4 +235,3 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
-
