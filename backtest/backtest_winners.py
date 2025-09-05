@@ -138,7 +138,7 @@ def main():
     with open(per_game_csv, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow([
-            'season', 'week', 'date', 'home', 'away', 'projected_margin',
+            'season', 'week', 'date', 'home', 'away', 'projected_margin', 'actual_margin', 'covered_predicted',
             'predicted_winner_side', 'predicted_winner_team', 'actual_winner_side', 'actual_winner_team', 'correct'
         ])
 
@@ -166,6 +166,14 @@ def main():
                 predicted_team = g['home_name'] if predicted_winner == 'home' else g['away_name'] if predicted_winner == 'away' else 'TIE'
                 actual_team = g['home_name'] if actual_winner == 'home' else g['away_name'] if actual_winner == 'away' else 'TIE'
 
+                # Coverage of our predicted spread (projected margin)
+                if projected > 0:
+                    covered = 'Yes' if actual_margin >= projected else 'No'
+                elif projected < 0:
+                    covered = 'Yes' if actual_margin <= projected else 'No'
+                else:
+                    covered = 'Push'
+
                 if predicted_winner == 'push' or actual_winner == 'push':
                     pushes += 1
                     is_correct = ''
@@ -175,7 +183,7 @@ def main():
                         correct += 1
                 total += 1
                 w.writerow([
-                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected:+.1f}",
+                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected:+.1f}", f"{actual_margin:+.1f}", covered,
                     predicted_winner, predicted_team, actual_winner, actual_team, is_correct
                 ])
                 all_rows.append({
@@ -185,6 +193,8 @@ def main():
                     'home': g['home_abbr'],
                     'away': g['away_abbr'],
                     'projected_margin': projected,
+                    'actual_margin': actual_margin,
+                    'covered': covered,
                     'predicted_team': predicted_team,
                     'actual_team': actual_team,
                     'correct': is_correct == '1'
@@ -211,7 +221,8 @@ def main():
         f.write("<h2>Per-Game Results</h2>")
         f.write("<table><tr>" \
                 "<th>Week</th><th>Date</th><th>Away</th><th>Home</th>" \
-                "<th>Projected Margin (Home)</th><th>Predicted Winner</th><th>Actual Winner</th><th>Correct</th>" \
+                "<th>Projected Margin (Home)</th><th>Actual Margin</th><th>Covered (Predicted)</th>" \
+                "<th>Predicted Winner</th><th>Actual Winner</th><th>Correct</th>" \
                 "</tr>")
         for row in sorted(all_rows, key=lambda r: (r['week'], r['date'])):
             f.write("<tr>" +
@@ -220,6 +231,8 @@ def main():
                     f"<td>{row['away']}</td>" +
                     f"<td>{row['home']}</td>" +
                     f"<td>{row['projected_margin']:+.1f}</td>" +
+                    f"<td>{row['actual_margin']:+.1f}</td>" +
+                    f"<td>{row['covered']}</td>" +
                     f"<td>{row['predicted_team']}</td>" +
                     f"<td>{row['actual_team']}</td>" +
                     f"<td>{'✅' if row['correct'] else '❌'}</td>" +

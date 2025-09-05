@@ -206,7 +206,8 @@ def main():
         writer = csv.writer(f)
         writer.writerow([
             'season', 'week', 'date', 'home', 'away',
-            'projected', 'market', 'edge', 'actual_margin', 'ats_pick', 'ats_result', 'correct'
+            'projected', 'market', 'edge', 'actual_margin', 'covered_predicted',
+            'ats_pick', 'ats_result', 'correct'
         ])
 
         for week in range(1, 19):
@@ -268,12 +269,20 @@ def main():
                 # Error vs actual margin
                 mae_actual.append(abs(projected - actual_margin))
 
+                # Covered our predicted spread?
+                if projected > 0:
+                    covered_pred = 'Yes' if actual_margin >= projected else 'No'
+                elif projected < 0:
+                    covered_pred = 'Yes' if actual_margin <= projected else 'No'
+                else:
+                    covered_pred = 'Push'
+
                 writer.writerow([
                     args.season, week, g['date'], g['home_abbr'], g['away_abbr'],
                     f"{projected:+.1f}",
                     (f"{market_spread:+.1f}" if market_spread is not None else ''),
                     (f"{(projected - market_spread):+.1f}" if market_spread is not None else ''),
-                    f"{actual_margin:+.1f}", ats_pick, ats_result, is_correct
+                    f"{actual_margin:+.1f}", covered_pred, ats_pick, ats_result, is_correct
                 ])
 
     # Summarize
@@ -310,6 +319,29 @@ def main():
         # Link to CSVs
         f.write("<h3>Artifacts</h3>")
         f.write(f"<p>Per-game CSV: {per_game_csv}<br>Summary CSV: {summary_csv}</p>")
+        # Per-game table
+        f.write("<h2>Per-Game Results</h2>")
+        f.write("<table><tr><th>Week</th><th>Date</th><th>Away</th><th>Home</th><th>Projected</th><th>Market</th><th>Edge</th><th>Actual Margin</th><th>Covered (Predicted)</th><th>ATS Pick</th><th>ATS Result</th><th>Correct</th></tr>")
+        # Re-read per-game rows to render quickly
+        import csv as _csv
+        with open(per_game_csv, 'r') as _pf:
+            rdr = _csv.DictReader(_pf)
+            for row in rdr:
+                f.write("<tr>" +
+                        f"<td>{row['week']}</td>" +
+                        f"<td>{row['date']}</td>" +
+                        f"<td>{row['away']}</td>" +
+                        f"<td>{row['home']}</td>" +
+                        f"<td>{row['projected']}</td>" +
+                        f"<td>{row['market']}</td>" +
+                        f"<td>{row['edge']}</td>" +
+                        f"<td>{row['actual_margin']}</td>" +
+                        f"<td>{row.get('covered_predicted','')}</td>" +
+                        f"<td>{row['ats_pick']}</td>" +
+                        f"<td>{row['ats_result']}</td>" +
+                        f"<td>{'✅' if row['correct']=='1' else ('' if row['correct']=='' else '❌')}</td>" +
+                        "</tr>")
+        f.write("</table>")
         f.write("</body></html>")
 
     print(f"Backtest complete for {args.season}")
