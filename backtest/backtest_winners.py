@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 
 from power_ranking.power_ranking.api.espn_client import ESPNClient
 from power_ranking.power_ranking.models.power_rankings import PowerRankModel
+import yaml
 
 
 def ensure_dir(path: str) -> str:
@@ -138,10 +139,20 @@ def main():
     # Collect all game rows for HTML
     all_rows: List[Dict[str, Any]] = []
 
+    # Load margin calibration if present
+    a, b = 0.0, 1.0
+    try:
+        with open('calibration/params.yaml', 'r') as _pf:
+            cfg = yaml.safe_load(_pf) or {}
+            a = float(cfg.get('calibration', {}).get('margin', {}).get('a', 0.0))
+            b = float(cfg.get('calibration', {}).get('margin', {}).get('b', 1.0))
+    except Exception:
+        pass
+
     with open(per_game_csv, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow([
-            'season', 'week', 'date', 'home', 'away', 'projected_margin', 'actual_margin', 'away_score', 'home_score', 'final_score', 'covered_predicted',
+            'season', 'week', 'date', 'home', 'away', 'projected_margin_raw', 'projected_margin_cal', 'actual_margin', 'abs_error_raw', 'abs_error_cal', 'away_score', 'home_score', 'final_score', 'covered_predicted',
             'predicted_winner_side', 'predicted_winner_team', 'actual_winner_side', 'actual_winner_team', 'correct'
         ])
 
@@ -162,18 +173,19 @@ def main():
                 home_id, away_id = g['home_id'], g['away_id']
                 if home_id not in powers or away_id not in powers:
                     continue
-                projected = (powers[home_id] - powers[away_id]) + args.hfa
+                projected_raw = (powers[home_id] - powers[away_id]) + args.hfa
+                projected_cal = a + b * projected_raw
                 actual_margin = g['home_score'] - g['away_score']
-                predicted_winner = 'home' if projected > 0 else 'away' if projected < 0 else 'push'
+                predicted_winner = 'home' if projected_raw > 0 else 'away' if projected_raw < 0 else 'push'
                 actual_winner = 'home' if actual_margin > 0 else 'away' if actual_margin < 0 else 'push'
                 predicted_team = g['home_name'] if predicted_winner == 'home' else g['away_name'] if predicted_winner == 'away' else 'TIE'
                 actual_team = g['home_name'] if actual_winner == 'home' else g['away_name'] if actual_winner == 'away' else 'TIE'
 
-                # Coverage of our predicted spread (projected margin)
-                if projected > 0:
-                    covered = 'Yes' if actual_margin >= projected else 'No'
-                elif projected < 0:
-                    covered = 'Yes' if actual_margin <= projected else 'No'
+                # Coverage of our predicted spread (use calibrated for fairness)
+                if projected_cal > 0:
+                    covered = 'Yes' if actual_margin >= projected_cal else 'No'
+                elif projected_cal < 0:
+                    covered = 'Yes' if actual_margin <= projected_cal else 'No'
                 else:
                     covered = 'Push'
                 if covered == 'Yes':
@@ -192,7 +204,7 @@ def main():
                         correct += 1
                 total += 1
                 w.writerow([
-                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected:+.1f}", f"{actual_margin:+.1f}", g['away_score'], g['home_score'], f"{g['away_score']}-{g['home_score']}", covered,
+                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected_raw:+.1f}", f"{projected_cal:+.1f}", f"{actual_margin:+.1f}", f"{abs(projected_raw-actual_margin):.1f}", f"{abs(projected_cal-actual_margin):.1f}", g['away_score'], g['home_score'], f"{g['away_score']}-{g['home_score']}", covered,
                     predicted_winner, predicted_team, actual_winner, actual_team, is_correct
                 ])
                 all_rows.append({
@@ -205,8 +217,11 @@ def main():
                     'away_name': g['away_name'],
                     'home_score': g['home_score'],
                     'away_score': g['away_score'],
-                    'projected_margin': projected,
+                    'projected_margin': projected_raw,
+                    'projected_margin_cal': projected_cal,
                     'actual_margin': actual_margin,
+                    'abs_error_raw': abs(projected_raw-actual_margin),
+                    'abs_error_cal': abs(projected_cal-actual_margin),
                     'covered': covered,
                     'predicted_team': predicted_team,
                     'actual_team': actual_team,
@@ -250,9 +265,25 @@ def main():
                 "function filterRows(){var w=document.getElementById('fWeek').value;var t=norm(document.getElementById('fTeam').value);var p=document.getElementById('fPred').value;var pos=document.getElementById('fPos').value;var cov=document.getElementById('fCov').value;var rows=document.querySelectorAll('#results tr');rows.forEach(function(r){var show=true; if(w && r.dataset.week!==w){show=false;} var home=r.dataset.home||''; var away=r.dataset.away||''; var pside=r.dataset.pside||''; var hname=(r.dataset.hname||'').toLowerCase(); var aname=(r.dataset.aname||'').toLowerCase(); var covered=(r.dataset.covered||''); if(t && !matchesTeam(home,away,hname,aname,t,pos)){show=false;} if(p && pside!==p){show=false;} if(cov){ if(cov==='covered' && covered!=='yes') show=false; else if(cov==='not' && covered!=='no') show=false; else if(cov==='push' && covered!=='push') show=false;} r.style.display=show?'':'none';});}\n"
                 "function resetFilters(){document.getElementById('fWeek').value='';document.getElementById('fTeam').value='';document.getElementById('fPred').value='';document.getElementById('fPos').value='';document.getElementById('fCov').value='';filterRows();}\n"
                 "</script>")
+        # Weekly MAE (raw vs calibrated)
+        from collections import defaultdict
+        mae_week = defaultdict(lambda: {'raw': [], 'cal': []})
+        for r in all_rows:
+            mae_week[r['week']]['raw'].append(r['abs_error_raw'])
+            mae_week[r['week']]['cal'].append(r['abs_error_cal'])
+        f.write("<h3>Weekly MAE (Raw vs Calibrated)</h3>")
+        f.write("<table><tr><th>Week</th><th>MAE Raw</th><th>MAE Cal</th></tr>")
+        for wk in sorted(mae_week.keys()):
+            raw = mae_week[wk]['raw']
+            cal = mae_week[wk]['cal']
+            raw_mae = sum(raw)/len(raw) if raw else 0.0
+            cal_mae = sum(cal)/len(cal) if cal else 0.0
+            f.write(f"<tr><td>{wk}</td><td>{raw_mae:.2f}</td><td>{cal_mae:.2f}</td></tr>")
+        f.write("</table>")
+
         f.write("<table><tr>" \
                 "<th>Week</th><th>Date</th><th>Away</th><th>Home</th>" \
-                "<th>Projected Margin (Home)</th><th>Actual Margin</th><th>Final Score</th><th>Covered (Predicted)</th>" \
+                "<th>Projected (Raw)</th><th>Projected (Cal)</th><th>Actual Margin</th><th>AbsErr Raw</th><th>AbsErr Cal</th><th>Final Score</th><th>Covered (Predicted)</th>" \
                 "<th>Predicted Winner</th><th>Actual Winner</th><th>Correct</th>" \
                 "</tr><tbody id='results'>")
         for row in sorted(all_rows, key=lambda r: (r['week'], r['date'])):
@@ -262,7 +293,10 @@ def main():
                     f"<td>{row['away']}</td>" +
                     f"<td>{row['home']}</td>" +
                     f"<td>{row['projected_margin']:+.1f}</td>" +
+                    f"<td>{row['projected_margin_cal']:+.1f}</td>" +
                     f"<td>{row['actual_margin']:+.1f}</td>" +
+                    f"<td>{row['abs_error_raw']:.1f}</td>" +
+                    f"<td>{row['abs_error_cal']:.1f}</td>" +
                     f"<td>{row['away_score']}-{row['home_score']}</td>" +
                     f"<td>{row['covered']}</td>" +
                     f"<td>{row['predicted_team']}</td>" +

@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from power_ranking.power_ranking.api.espn_client import ESPNClient
 from power_ranking.power_ranking.models.power_rankings import PowerRankModel
+import yaml
 
 
 def ensure_dir(path: str) -> str:
@@ -202,11 +203,21 @@ def main():
     mae_market = []
     mae_actual = []
 
+    # Load calibration for reporting
+    a, b = 0.0, 1.0
+    try:
+        with open('calibration/params.yaml', 'r') as _pf:
+            cfg = yaml.safe_load(_pf) or {}
+            a = float(cfg.get('calibration', {}).get('margin', {}).get('a', 0.0))
+            b = float(cfg.get('calibration', {}).get('margin', {}).get('b', 1.0))
+    except Exception:
+        pass
+
     with open(per_game_csv, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow([
             'season', 'week', 'date', 'home', 'away',
-            'projected', 'market', 'edge', 'actual_margin', 'away_score', 'home_score', 'final_score', 'covered_predicted',
+            'projected_raw', 'projected_cal', 'market', 'edge', 'actual_margin', 'abs_error_raw', 'abs_error_cal', 'away_score', 'home_score', 'final_score', 'covered_predicted',
             'ats_pick', 'ats_result', 'correct'
         ])
 
@@ -236,7 +247,7 @@ def main():
                     continue
                 home_power = power_scores[home_id]
                 away_power = power_scores[away_id]
-                projected = (home_power - away_power) + args.hfa
+                projected_raw = (home_power - away_power) + args.hfa
                 ms_ml = odds_map.get((g['home_id'], g['away_id']))
                 if ms_ml is not None:
                     market_spread, market_line = ms_ml
@@ -245,8 +256,9 @@ def main():
                 # Actual margin
                 actual_margin = g['home_score'] - g['away_score']
                 # ATS pick and result
-                ats_pick = 'home' if projected > (market_spread if market_spread is not None else 0.0) else (
-                           'away' if projected < (market_spread if market_spread is not None else 0.0) else 'push')
+                proj_cal = a + b * projected_raw
+                ats_pick = 'home' if proj_cal > (market_spread if market_spread is not None else 0.0) else (
+                           'away' if proj_cal < (market_spread if market_spread is not None else 0.0) else 'push')
                 ats_result = 'push'
                 is_correct = ''
                 if market_spread is not None:
@@ -265,24 +277,24 @@ def main():
                         if is_correct == '1':
                             correct += 1
                     total_games += 1
-                    mae_market.append(abs(projected - market_spread))
+                    mae_market.append(abs(proj_cal - market_spread))
                 # Error vs actual margin
-                mae_actual.append(abs(projected - actual_margin))
+                mae_actual.append(abs(proj_cal - actual_margin))
 
                 # Covered our predicted spread?
-                if projected > 0:
-                    covered_pred = 'Yes' if actual_margin >= projected else 'No'
-                elif projected < 0:
-                    covered_pred = 'Yes' if actual_margin <= projected else 'No'
+                if proj_cal > 0:
+                    covered_pred = 'Yes' if actual_margin >= proj_cal else 'No'
+                elif proj_cal < 0:
+                    covered_pred = 'Yes' if actual_margin <= proj_cal else 'No'
                 else:
                     covered_pred = 'Push'
 
                 writer.writerow([
                     args.season, week, g['date'], g['home_abbr'], g['away_abbr'],
-                    f"{projected:+.1f}",
+                    f"{projected_raw:+.1f}", f"{proj_cal:+.1f}",
                     (f"{market_spread:+.1f}" if market_spread is not None else ''),
-                    (f"{(projected - market_spread):+.1f}" if market_spread is not None else ''),
-                    f"{actual_margin:+.1f}", g['away_score'], g['home_score'], f"{g['away_score']}-{g['home_score']}", covered_pred, ats_pick, ats_result, is_correct
+                    (f"{(proj_cal - market_spread):+.1f}" if market_spread is not None else ''),
+                    f"{actual_margin:+.1f}", f"{abs(projected_raw-actual_margin):.1f}", f"{abs(proj_cal-actual_margin):.1f}", g['away_score'], g['home_score'], f"{g['away_score']}-{g['home_score']}", covered_pred, ats_pick, ats_result, is_correct
                 ])
 
     # Summarize
@@ -321,7 +333,7 @@ def main():
         f.write(f"<p>Per-game CSV: {per_game_csv}<br>Summary CSV: {summary_csv}</p>")
         # Per-game table
         f.write("<h2>Per-Game Results</h2>")
-        f.write("<table><tr><th>Week</th><th>Date</th><th>Away</th><th>Home</th><th>Projected</th><th>Market</th><th>Edge</th><th>Actual Margin</th><th>Final Score</th><th>Covered (Predicted)</th><th>ATS Pick</th><th>ATS Result</th><th>Correct</th></tr>")
+        f.write("<table><tr><th>Week</th><th>Date</th><th>Away</th><th>Home</th><th>Proj Raw</th><th>Proj Cal</th><th>Market</th><th>Edge</th><th>Actual Margin</th><th>AbsErr Raw</th><th>AbsErr Cal</th><th>Final Score</th><th>Covered (Predicted)</th><th>ATS Pick</th><th>ATS Result</th><th>Correct</th></tr>")
         # Re-read per-game rows to render quickly
         import csv as _csv
         with open(per_game_csv, 'r') as _pf:
@@ -332,10 +344,13 @@ def main():
                         f"<td>{row['date']}</td>" +
                         f"<td>{row['away']}</td>" +
                         f"<td>{row['home']}</td>" +
-                        f"<td>{row['projected']}</td>" +
+                        f"<td>{row['projected_raw']}</td>" +
+                        f"<td>{row['projected_cal']}</td>" +
                         f"<td>{row['market']}</td>" +
                         f"<td>{row['edge']}</td>" +
                         f"<td>{row['actual_margin']}</td>" +
+                        f"<td>{row.get('abs_error_raw','')}</td>" +
+                        f"<td>{row.get('abs_error_cal','')}</td>" +
                         f"<td>{row.get('final_score','')}</td>" +
                         f"<td>{row.get('covered_predicted','')}</td>" +
                         f"<td>{row['ats_pick']}</td>" +
