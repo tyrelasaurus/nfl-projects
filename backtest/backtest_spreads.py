@@ -205,11 +205,15 @@ def main():
 
     # Load calibration for reporting
     a, b = 0.0, 1.0
+    blend = {'low': 3.0, 'high': 7.0}
     try:
         with open('calibration/params.yaml', 'r') as _pf:
             cfg = yaml.safe_load(_pf) or {}
             a = float(cfg.get('calibration', {}).get('margin', {}).get('a', 0.0))
             b = float(cfg.get('calibration', {}).get('margin', {}).get('b', 1.0))
+            bl = cfg.get('calibration', {}).get('blend', {})
+            blend['low'] = float(bl.get('low', 3.0))
+            blend['high'] = float(bl.get('high', 7.0))
     except Exception:
         pass
 
@@ -256,7 +260,16 @@ def main():
                 # Actual margin
                 actual_margin = g['home_score'] - g['away_score']
                 # ATS pick and result
-                proj_cal = a + b * projected_raw
+                lo, hi = blend['low'], blend['high']
+                cal_lin = a + b * projected_raw
+                mag = abs(projected_raw)
+                if mag <= lo:
+                    proj_cal = projected_raw
+                elif mag >= hi:
+                    proj_cal = cal_lin
+                else:
+                    t = (mag - lo) / (hi - lo)
+                    proj_cal = (1 - t) * projected_raw + t * cal_lin
                 ats_pick = 'home' if proj_cal > (market_spread if market_spread is not None else 0.0) else (
                            'away' if proj_cal < (market_spread if market_spread is not None else 0.0) else 'push')
                 ats_result = 'push'

@@ -2,6 +2,9 @@ calibration:
   margin:
     a: 0.15018776250595497
     b: 0.8416165893315926
+  blend:
+    low: 3.0
+    high: 7.0
 model:
   hfa: 1.7000000000000006
   weights:

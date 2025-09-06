@@ -139,6 +139,7 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
     calib_path = os.path.join(os.getcwd(), 'calibration', 'params.yaml')
     a, b = 0.0, 1.0
     hfa = 2.0
+    blend = {'low': 3.0, 'high': 7.0}
     try:
         if os.path.exists(calib_path):
             with open(calib_path, 'r') as f:
@@ -146,11 +147,25 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
                 a = float(cfg.get('calibration', {}).get('margin', {}).get('a', 0.0))
                 b = float(cfg.get('calibration', {}).get('margin', {}).get('b', 1.0))
                 hfa = float(cfg.get('model', {}).get('hfa', 2.0))
+                bl = cfg.get('calibration', {}).get('blend', {})
+                blend['low'] = float(bl.get('low', 3.0))
+                blend['high'] = float(bl.get('high', 7.0))
     except Exception:
         pass
 
     calc = SpreadCalculator(home_field_advantage=hfa)
     results = calc.calculate_week_spreads(matchups, power, week)
+
+    def calibrated_value(raw: float) -> float:
+        cal = a + b * raw
+        lo, hi = blend['low'], blend['high']
+        mag = abs(raw)
+        if mag <= lo:
+            return raw
+        if mag >= hi:
+            return cal
+        t = (mag - lo) / (hi - lo)
+        return (1 - t) * raw + t * cal
 
     # Write a CSV
     spreads_csv = os.path.join(output_dir, f'spreads_week_{week}.csv')
@@ -167,11 +182,11 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
                     mk = info.get('market_spread')
                     ml = info.get('market_line')
                     if mk is not None:
-                        edge = (a + b * r.projected_spread) - mk
+                        edge = calibrated_value(r.projected_spread) - mk
             writer.writerow([
                 r.week, r.home_team, r.away_team, f"{r.projected_spread:.1f}",
-                f"{(a + b * r.projected_spread):.1f}",
-                calc.format_spread_as_betting_line((a + b * r.projected_spread), r.home_team),
+                f"{calibrated_value(r.projected_spread):.1f}",
+                calc.format_spread_as_betting_line(calibrated_value(r.projected_spread), r.home_team),
                 (f"{mk:.1f}" if isinstance(mk, (int, float)) else ''),
                 (ml or ''),
                 (f"{edge:+.1f}" if isinstance(edge, (int, float)) else ''),
@@ -185,11 +200,11 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
             'home_team': r.home_team,
             'away_team': r.away_team,
             'projected_spread_raw': r.projected_spread,
-            'projected_spread': (a + b * r.projected_spread),
-            'betting_line': calc.format_spread_as_betting_line((a + b * r.projected_spread), r.home_team),
+            'projected_spread': calibrated_value(r.projected_spread),
+            'betting_line': calc.format_spread_as_betting_line(calibrated_value(r.projected_spread), r.home_team),
             'market_spread': (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread'),
             'market_line': (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_line'),
-            'edge': ((a + b * r.projected_spread) - (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread')
+            'edge': (calibrated_value(r.projected_spread) - (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread')
                      if (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread') is not None else None),
             'game_date': r.game_date,
         }

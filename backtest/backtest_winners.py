@@ -141,11 +141,15 @@ def main():
 
     # Load margin calibration if present
     a, b = 0.0, 1.0
+    blend = {'low': 3.0, 'high': 7.0}
     try:
         with open('calibration/params.yaml', 'r') as _pf:
             cfg = yaml.safe_load(_pf) or {}
             a = float(cfg.get('calibration', {}).get('margin', {}).get('a', 0.0))
             b = float(cfg.get('calibration', {}).get('margin', {}).get('b', 1.0))
+            bl = cfg.get('calibration', {}).get('blend', {})
+            blend['low'] = float(bl.get('low', 3.0))
+            blend['high'] = float(bl.get('high', 7.0))
     except Exception:
         pass
 
@@ -174,7 +178,16 @@ def main():
                 if home_id not in powers or away_id not in powers:
                     continue
                 projected_raw = (powers[home_id] - powers[away_id]) + args.hfa
-                projected_cal = a + b * projected_raw
+                lo, hi = blend['low'], blend['high']
+                cal_lin = a + b * projected_raw
+                mag = abs(projected_raw)
+                if mag <= lo:
+                    projected_cal = projected_raw
+                elif mag >= hi:
+                    projected_cal = cal_lin
+                else:
+                    t = (mag - lo) / (hi - lo)
+                    projected_cal = (1 - t) * projected_raw + t * cal_lin
                 actual_margin = g['home_score'] - g['away_score']
                 predicted_winner = 'home' if projected_raw > 0 else 'away' if projected_raw < 0 else 'push'
                 actual_winner = 'home' if actual_margin > 0 else 'away' if actual_margin < 0 else 'push'
