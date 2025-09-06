@@ -509,14 +509,28 @@ def main():
 
     spreads_csv, spreads = run_spread_model(pr_abbrev_csv, schedule_csv, target_week, output_dir, odds_map)
     print("\n=== Spread Predictions ===")
-    # Determine filter for printing
+    # Determine filter for printing (read policy locally)
     print_filter = None
-    if odds_map and edge_enabled:
-        print_filter = lambda row: (isinstance(row.get('edge'), (int, float)) and abs(row['edge']) >= edge_threshold)
-        print(f"Applied edge filter: abs(edge) >= {edge_threshold:.1f}")
-    elif (not odds_map) and conf_enabled:
-        print_filter = lambda row: abs(row['projected_spread']) >= conf_margin_threshold
-        print(f"Applied confidence filter: abs(projected) >= {conf_margin_threshold:.1f}")
+    try:
+        cal_path = os.path.join(os.getcwd(), 'calibration', 'params.yaml')
+        if os.path.exists(cal_path):
+            with open(cal_path, 'r') as f:
+                cfg = yaml.safe_load(f) or {}
+            pol = (cfg.get('calibration') or {}).get('policy') or {}
+            edge_pol = pol.get('edge') or {}
+            conf_pol = pol.get('confidence') or {}
+            _edge_enabled = bool(edge_pol.get('enabled', False))
+            _edge_threshold = float(edge_pol.get('threshold', 0.0) or 0.0)
+            _conf_enabled = bool(conf_pol.get('enabled', False))
+            _conf_thr = float(conf_pol.get('margin_threshold', 0.0) or 0.0)
+            if odds_map and _edge_enabled:
+                print_filter = lambda row: (isinstance(row.get('edge'), (int, float)) and abs(row['edge']) >= _edge_threshold)
+                print(f"Applied edge filter: abs(edge) >= {_edge_threshold:.1f}")
+            elif (not odds_map) and _conf_enabled:
+                print_filter = lambda row: abs(row['projected_spread']) >= _conf_thr
+                print(f"Applied confidence filter: abs(projected) >= {_conf_thr:.1f}")
+    except Exception:
+        pass
 
     for row in spreads:
         if print_filter and not print_filter(row):
