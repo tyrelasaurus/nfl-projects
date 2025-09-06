@@ -24,12 +24,12 @@ def ensure_dir(path: str) -> str:
     return p
 
 
-def get_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+def get_season_events(client, season: int) -> List[Dict[str, Any]]:
     data = client.get_season_final_rankings(season)
     return data.get('events', []) or []
 
 
-def get_prev_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+def get_prev_season_events(client, season: int) -> List[Dict[str, Any]]:
     try:
         return client.get_season_final_rankings(season - 1).get('events', []) or []
     except Exception:
@@ -249,7 +249,7 @@ def main():
     args = ap.parse_args()
 
     out_dir = ensure_dir(args.output)
-    client = ESPNClient()
+    client = get_client('sync')
     if not args.seasons:
         # Default to last 4 seasons ending with last completed
         last = client.get_last_completed_season()

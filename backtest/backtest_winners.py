@@ -27,7 +27,7 @@ import csv
 from typing import Dict, List, Tuple, Any
 from datetime import datetime, timezone
 
-from power_ranking.power_ranking.api.espn_client import ESPNClient
+from power_ranking.power_ranking.api.client_factory import get_client
 from power_ranking.power_ranking.models.power_rankings import PowerRankModel
 import yaml
 
@@ -38,12 +38,12 @@ def ensure_dir(path: str) -> str:
     return p
 
 
-def get_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+def get_season_events(client, season: int) -> List[Dict[str, Any]]:
     data = client.get_season_final_rankings(season)
     return data.get('events', []) or []
 
 
-def get_prev_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+def get_prev_season_events(client, season: int) -> List[Dict[str, Any]]:
     try:
         return client.get_season_final_rankings(season - 1).get('events', []) or []
     except Exception:
@@ -107,7 +107,7 @@ def main():
     parser.add_argument('--output', type=str, default='./backtests', help='Output directory')
     args = parser.parse_args()
 
-    client = ESPNClient()
+    client = get_client('sync')
     if not args.season:
         args.season = client.get_last_completed_season()
 

@@ -32,12 +32,12 @@ def ensure_dir(path: str) -> str:
     return p
 
 
-def get_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+def get_season_events(client, season: int) -> List[Dict[str, Any]]:
     """Fetch all regular-season events for a given season with week_number annotation."""
     data = client.get_season_final_rankings(season)
     return data.get('events', []) or []
 
-def get_prev_season_events(client: ESPNClient, season: int) -> List[Dict[str, Any]]:
+def get_prev_season_events(client, season: int) -> List[Dict[str, Any]]:
     try:
         return client.get_season_final_rankings(season - 1).get('events', []) or []
     except Exception:
@@ -86,7 +86,7 @@ def fetch_market_from_competition(comp: Dict[str, Any], home_abbr: str, away_abb
     return market_spread, market_line
 
 
-def build_week_odds_map(client: ESPNClient, season: int, week: int) -> Dict[Tuple[str, str], Tuple[Optional[float], Optional[str]]]:
+def build_week_odds_map(client, season: int, week: int) -> Dict[Tuple[str, str], Tuple[Optional[float], Optional[str]]]:
     """Build odds map for a given season week using scoreboard (historical) data.
 
     Returns mapping: event_id -> (market_spread, market_line)
