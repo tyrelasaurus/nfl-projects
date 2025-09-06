@@ -6,8 +6,14 @@ Uses `test_power.csv` and `test_schedule.csv` to exercise DataLoader and
 SpreadCalculator, writing a tiny output CSV under ./output.
 """
 import os
+import sys
 import csv
 from typing import Tuple
+
+# Ensure repo root is on sys.path for local package imports
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
 from nfl_model.spread_model import SpreadCalculator
 from nfl_model.data_loader import DataLoader
@@ -40,4 +46,3 @@ def run_smoke(week: int = 1) -> Tuple[str, int]:
 if __name__ == '__main__':
     out, n = run_smoke(1)
     print(f"Wrote {out} with {n} rows")
-
