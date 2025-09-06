@@ -4,8 +4,8 @@ calibration:
   use_calibrated_probability: true
   policy:
     edge:
-      enabled: false
-      threshold: 1.5
+      enabled: true
+      threshold: 2.0
       min_samples: 100
     confidence:
       enabled: false

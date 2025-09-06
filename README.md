@@ -15,7 +15,7 @@ Advanced NFL team power rankings using multi-factor statistical analysis:
 - Comprehensive validation and anomaly detection
 
 ### **NFL Spread Model** 
-Point spread prediction using power differential + home-field advantage (with optional calibration):
+Point spread prediction using power differential + home-field advantage (with optional calibration). Includes edge policy filtering and basic odds comparison when available.
 - Power rating differential calculations
 - Home field advantage adjustments
 - Statistical confidence intervals
@@ -219,6 +219,10 @@ nfl-projects/
 │   ├── statistical_methods.md # Mathematical documentation
 │   └── deployment.md       # Production deployment guide
 └── tests/                  # Integration and system tests
+
+Artifacts vs. Scripts
+- `backtest/`: Python scripts for running backtests and utilities (e.g., winners, spreads, aggregation, index builder).
+- `backtests/`: Generated artifacts from backtests (CSV/HTML). Ignored by Git by default.
 ```
 
 ## 🔍 Key Features

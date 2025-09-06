@@ -14,7 +14,7 @@ import csv
 from datetime import datetime, timezone
 from typing import List, Tuple, Dict, Any
 
-from power_ranking.power_ranking.api.espn_client import ESPNClient
+from power_ranking.power_ranking.api.client_factory import get_client
 from power_ranking.power_ranking.models.power_rankings import PowerRankModel
 
 
@@ -84,7 +84,7 @@ def build_training_events(prev_events: List[Dict[str, Any]], curr_events: List[D
 
 
 def run_winners_for_season(season: int, last_n: int, hfa: float, out_dir: str) -> Tuple[Dict[str, Any], str, str]:
-    client = ESPNClient()
+    client = get_client('sync')
     teams = client.get_teams()
     curr_events = get_season_events(client, season)
     prev_events = get_prev_season_events(client, season)

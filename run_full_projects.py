@@ -44,11 +44,11 @@ def build_team_abbr_map() -> Dict[str, str]:
 
 def run_power_rankings(week: int | None, last_n: int, output_dir: str) -> Tuple[str, List[Tuple[str, str, float]], Dict[str, Any]]:
     """Run power rankings and return (csv_path, rankings, computation_data)."""
-    from power_ranking.power_ranking.api.espn_client import ESPNClient
+    from power_ranking.power_ranking.api.client_factory import get_client
     from power_ranking.power_ranking.models.power_rankings import PowerRankModel
     from power_ranking.power_ranking.export.csv_exporter import CSVExporter
 
-    client = ESPNClient()
+    client = get_client('sync')
     # Load tuned weights if present
     tuned_weights = None
     try:
@@ -276,9 +276,9 @@ def fetch_schedule_from_espn(week: int, season: int, output_dir: str) -> Tuple[s
     Returns path to the CSV with columns: week,home_team,away_team,game_date
     Teams are written as abbreviations.
     """
-    from power_ranking.power_ranking.api.espn_client import ESPNClient
+    from power_ranking.power_ranking.api.client_factory import get_client
 
-    client = ESPNClient()
+    client = get_client('sync')
     data = client.get_scoreboard(week=week, season=season)
 
     abbr_map = build_team_abbr_map()

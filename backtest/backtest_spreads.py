@@ -21,7 +21,7 @@ import csv
 from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime, timezone
 
-from power_ranking.power_ranking.api.espn_client import ESPNClient
+from power_ranking.power_ranking.api.client_factory import get_client
 from power_ranking.power_ranking.models.power_rankings import PowerRankModel
 import yaml
 
@@ -172,7 +172,7 @@ def main():
     parser.add_argument('--output', type=str, default='./backtests', help='Output directory')
     args = parser.parse_args()
 
-    client = ESPNClient()
+    client = get_client('sync')
     if not args.season:
         args.season = client.get_last_completed_season()
 
