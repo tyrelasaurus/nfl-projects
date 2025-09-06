@@ -145,6 +145,11 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
     enable_calibration = True
     use_calibrated_probability = True
     params_version = None
+    # Edge policy config
+    edge_enabled = False
+    edge_threshold = 0.0
+    conf_enabled = False
+    conf_margin_threshold = 0.0
     try:
         if os.path.exists(calib_path):
             with open(calib_path, 'r') as f:
@@ -159,6 +164,13 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
                 blend['high'] = float(bl.get('high', 7.0))
                 enable_calibration = bool(cal_cfg.get('enable_calibration', True))
                 use_calibrated_probability = bool(cal_cfg.get('use_calibrated_probability', True))
+                policy = cal_cfg.get('policy', {})
+                edge_policy = policy.get('edge', {}) if isinstance(policy, dict) else {}
+                conf_policy = policy.get('confidence', {}) if isinstance(policy, dict) else {}
+                edge_enabled = bool(edge_policy.get('enabled', False))
+                edge_threshold = float(edge_policy.get('threshold', 0.0) or 0.0)
+                conf_enabled = bool(conf_policy.get('enabled', False))
+                conf_margin_threshold = float(conf_policy.get('margin_threshold', 0.0) or 0.0)
                 prob = cal_cfg.get('probability')
                 if prob and isinstance(prob.get('x'), list) and isinstance(prob.get('p'), list):
                     prob_map = {'x': [float(v) for v in prob['x']], 'p': [float(v) for v in prob['p']]}
@@ -203,7 +215,7 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
     spreads_csv = os.path.join(output_dir, f'spreads_week_{week}.csv')
     with open(spreads_csv, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['week', 'home_team', 'away_team', 'projected_spread_raw', 'projected_spread', 'home_win_prob', 'betting_line', 'market_spread', 'market_line', 'edge', 'game_date'])
+        writer.writerow(['week', 'home_team', 'away_team', 'projected_spread_raw', 'projected_spread', 'home_win_prob', 'betting_line', 'market_spread', 'market_line', 'edge', 'actionable', 'game_date'])
         for r in results:
             mk = None
             ml = None
@@ -215,6 +227,12 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
                     ml = info.get('market_line')
                     if mk is not None:
                         edge = calibrated_value(r.projected_spread) - mk
+            # Determine if actionable based on policy
+            actionable = True
+            if odds_map and edge_enabled and edge is not None:
+                actionable = abs(edge) >= edge_threshold
+            elif not odds_map and conf_enabled:
+                actionable = abs(calibrated_value(r.projected_spread)) >= conf_margin_threshold
             writer.writerow([
                 r.week, r.home_team, r.away_team, f"{r.projected_spread:.1f}",
                 f"{calibrated_value(r.projected_spread):.1f}", f"{prob_home_from_margin(calibrated_value(r.projected_spread)):.3f}",
@@ -222,6 +240,7 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
                 (f"{mk:.1f}" if isinstance(mk, (int, float)) else ''),
                 (ml or ''),
                 (f"{edge:+.1f}" if isinstance(edge, (int, float)) else ''),
+                ('Y' if actionable else ''),
                 r.game_date
             ])
 
@@ -239,6 +258,9 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
             'market_line': (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_line'),
             'edge': (calibrated_value(r.projected_spread) - (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread')
                      if (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread') is not None else None),
+            'actionable': (abs((calibrated_value(r.projected_spread) - (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread'))) >= edge_threshold
+                           if (odds_map and edge_enabled and (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread') is not None)
+                           else (abs(calibrated_value(r.projected_spread)) >= conf_margin_threshold if (not odds_map and conf_enabled) else True)),
             'game_date': r.game_date,
         }
         for r in results
@@ -431,14 +453,15 @@ def write_summary_html(output_dir: str,
     html.append("</table>")
 
     html.append("<h2>Spread Predictions</h2>")
-    html.append("<table><tr><th>Matchup</th><th>Projected</th><th>Betting Line</th><th>Market</th><th>Edge</th><th>Date</th></tr>")
+    html.append("<table><tr><th>Matchup</th><th>Projected</th><th>Betting Line</th><th>Market</th><th>Edge</th><th>Actionable</th><th>Date</th></tr>")
     for row in spreads:
         matchup = f"{row['away_team']} @ {row['home_team']}"
         market_line = row.get('market_line') or ''
         edge = row.get('edge')
         edge_str = f"{edge:+.1f}" if isinstance(edge, (int, float)) else ''
+        actionable = 'Y' if row.get('actionable') else ''
         html.append(
-            f"<tr><td>{matchup}</td><td>{row['projected_spread']:+.1f}</td><td>{row['betting_line']}</td><td>{market_line}</td><td>{edge_str}</td><td>{row['game_date']}</td></tr>"
+            f"<tr><td>{matchup}</td><td>{row['projected_spread']:+.1f}</td><td>{row['betting_line']}</td><td>{market_line}</td><td>{edge_str}</td><td>{actionable}</td><td>{row['game_date']}</td></tr>"
         )
     html.append("</table>")
     html.append("</body></html>")
@@ -486,14 +509,26 @@ def main():
 
     spreads_csv, spreads = run_spread_model(pr_abbrev_csv, schedule_csv, target_week, output_dir, odds_map)
     print("\n=== Spread Predictions ===")
+    # Determine filter for printing
+    print_filter = None
+    if odds_map and edge_enabled:
+        print_filter = lambda row: (isinstance(row.get('edge'), (int, float)) and abs(row['edge']) >= edge_threshold)
+        print(f"Applied edge filter: abs(edge) >= {edge_threshold:.1f}")
+    elif (not odds_map) and conf_enabled:
+        print_filter = lambda row: abs(row['projected_spread']) >= conf_margin_threshold
+        print(f"Applied confidence filter: abs(projected) >= {conf_margin_threshold:.1f}")
+
     for row in spreads:
+        if print_filter and not print_filter(row):
+            continue
         market = row.get('market_spread')
         edge = row.get('edge')
         suffix = ''
         if market is not None:
             ml = row.get('market_line') or ''
             suffix = f" | Market: {ml} | Edge: {edge:+.1f}"
-        print(f"{row['away_team']} @ {row['home_team']}: {row['projected_spread']:+.1f} ({row['betting_line']}){suffix}")
+        tag = " [EDGE]" if row.get('actionable') else ''
+        print(f"{row['away_team']} @ {row['home_team']}: {row['projected_spread']:+.1f} ({row['betting_line']}){suffix}{tag}")
     print(f"Saved spreads CSV: {spreads_csv}")
 
     # 3) Combined summary CSV and HTML

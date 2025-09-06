@@ -2,6 +2,14 @@ version: 1
 calibration:
   enable_calibration: true
   use_calibrated_probability: true
+  policy:
+    edge:
+      enabled: false
+      threshold: 1.5
+      min_samples: 100
+    confidence:
+      enabled: false
+      margin_threshold: 5.0
   margin:
     a: 0.15018776250595497
     b: 0.8416165893315926
