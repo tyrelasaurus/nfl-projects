@@ -156,8 +156,9 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
                 cfg = yaml.safe_load(f) or {}
                 params_version = cfg.get('version')
                 cal_cfg = cfg.get('calibration', {})
-                a = float(cal_cfg.get('margin', {}).get('a', 0.0))
-                b = float(cfg.get('calibration', {}).get('margin', {}).get('b', 1.0))
+                margin_cfg = cal_cfg.get('margin', {})
+                a = float(margin_cfg.get('a', 0.0))
+                b = float(margin_cfg.get('b', 1.0))
                 hfa = float(cfg.get('model', {}).get('hfa', 2.0))
                 bl = cal_cfg.get('blend', {})
                 blend['low'] = float(bl.get('low', 3.0))

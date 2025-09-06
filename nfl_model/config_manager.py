@@ -15,6 +15,9 @@ import logging
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from exceptions import NFLModelError, ModelConfigurationError
 
+# Preserve legacy raise-sites that referenced ConfigurationError
+ConfigurationError = ModelConfigurationError
+
 logger = logging.getLogger(__name__)
 
 @dataclass

@@ -15,7 +15,7 @@ Advanced NFL team power rankings using multi-factor statistical analysis:
 - Comprehensive validation and anomaly detection
 
 ### **NFL Spread Model** 
-Point spread prediction using Billy Walters methodology:
+Point spread prediction using power differential + home-field advantage (with optional calibration):
 - Power rating differential calculations
 - Home field advantage adjustments
 - Statistical confidence intervals
@@ -121,7 +121,7 @@ python -m power_ranking.power_ranking.cli --week 1 --last-n 17
 ### **Phase 2: Enhanced Integration** ✅ Complete  
 - **Error Handling**: Structured exception hierarchy
 - **Configuration Management**: YAML-based configuration system
-- **Data Validation**: Pydantic type-safe validation
+- **Data Validation**: Pydantic schemas available for data quality checks (optional dependency)
 
 ### **Phase 3: Performance & Scalability** ✅ Complete
 - **Memory Optimization**: 30-50% memory usage reduction
@@ -187,11 +187,11 @@ Optional dependency: Flask
 - Integration Tests: Comprehensive end-to-end testing
 - Memory Tests: Performance and optimization validation
 
-### **System Performance**:
-- **Memory Usage**: Optimized with 30-50% reduction
-- **API Response**: <200ms average response time
-- **Health Checks**: <150ms system health assessment
-- **Alert Processing**: <5ms alert creation and routing
+### **System Performance** (indicative; varies by environment):
+- **Memory Usage**: Optimizations applied in core paths
+- **API Response**: Dependent on network and ESPN latency
+- **Health Checks**: Lightweight checks for local runs
+- **Alert Processing**: Fast in local tests
 
 ## 📋 Project Structure
 
@@ -224,7 +224,7 @@ nfl-projects/
 ## 🔍 Key Features
 
 ### **Statistical Accuracy**
-- **Billy Walters Methodology**: Proven professional betting approach
+- **Modeling Method**: Power rating differential with home-field advantage
 - **Backtesting Framework**: Historical validation with multiple seasons
 - **Vegas Line Comparison**: Industry standard accuracy benchmarking
 - **Confidence Intervals**: Statistical uncertainty quantification
@@ -237,7 +237,7 @@ nfl-projects/
 
 ### **Developer Experience**  
 - **Comprehensive Testing**: 39% coverage with growing test suite
-- **Type Safe**: Pydantic validation throughout
+- **Type Safety**: Pydantic optional validation available
 - **Well Documented**: Inline documentation and examples
 - **Easy Integration**: Simple APIs with clear interfaces
 

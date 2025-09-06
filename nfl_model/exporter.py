@@ -2,7 +2,7 @@ import csv
 import os
 from typing import List
 from datetime import datetime
-from spread_model import MatchupResult
+from .spread_model import MatchupResult
 
 
 class CSVExporter:

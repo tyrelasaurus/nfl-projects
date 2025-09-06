@@ -3,20 +3,7 @@ from dataclasses import dataclass
 import os
 import sys
 
-# Add project root to path for imports
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
-
-try:
-    from config_manager import get_nfl_config
-except ImportError:
-    # Fallback for testing - create a mock function
-    def get_nfl_config():
-        class MockConfig:
-            class MockModel:
-                home_field_advantage = 2.0
-            model = MockModel()
-        return MockConfig()
+from .config_manager import get_nfl_config
 
 
 @dataclass
