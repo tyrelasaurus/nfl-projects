@@ -182,8 +182,8 @@ class DataLoader:
             Dictionary mapping team names to their power scores
         """
         if self._power_ratings is None:
-            df = pd.read_csv(self.power_rankings_path)
-            self._power_ratings = dict(zip(df['team_name'], df['power_score']))
+            # Reuse strict validator
+            self._power_ratings = load_power_rankings(self.power_rankings_path)
         return self._power_ratings
     
     def load_schedule(self, week: Optional[int] = None) -> pd.DataFrame:

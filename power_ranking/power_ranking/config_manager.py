@@ -13,6 +13,7 @@ import logging
 
 # Import from power_ranking exceptions
 from .exceptions import ConfigurationError
+from .config_utils import find_config_file, deep_merge, validate_logging_level
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,6 @@ class ConfigManager:
     def _find_config_file(self) -> str:
         """Find the configuration file in standard locations."""
         base_dir = os.path.dirname(__file__)
-        repo_root = os.path.abspath(os.path.join(base_dir, os.pardir, os.pardir))
         package_root = os.path.abspath(os.path.join(base_dir))
         possible_paths = [
             'config_enhanced.yaml',
@@ -127,12 +127,10 @@ class ConfigManager:
             # Also check project-level package directory for config.yaml
             os.path.join(os.path.dirname(package_root), 'config.yaml')
         ]
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                return path
-                
-        raise ConfigurationError(
+        try:
+            return find_config_file(possible_paths)
+        except FileNotFoundError:
+            raise ConfigurationError(
             "No configuration file found",
             context={
                 'searched_paths': possible_paths,
@@ -219,18 +217,10 @@ class ConfigManager:
             return
         
         logger.debug(f"Applying {self.environment} environment overrides")
-        self._deep_merge(self._raw_config, env_config)
+        deep_merge(self._raw_config, env_config)
     
     def _deep_merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
-        """Recursively merge override configuration into base."""
-        for key, value in override.items():
-            if key == 'environments':
-                continue  # Skip environments section in overrides
-                
-            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-                self._deep_merge(base[key], value)
-            else:
-                base[key] = value
+        deep_merge(base, override)
     
     def _build_typed_config(self) -> PowerRankingConfig:
         """Build typed configuration from raw dictionary."""

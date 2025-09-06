@@ -14,6 +14,7 @@ import logging
 # Add project root to path for exception imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from exceptions import NFLModelError, ModelConfigurationError
+from .config_utils import find_config_file, deep_merge, validate_logging_level
 
 # Preserve legacy raise-sites that referenced ConfigurationError
 ConfigurationError = ModelConfigurationError
@@ -170,12 +171,10 @@ class NFLConfigManager:
             os.path.join(os.path.dirname(__file__), 'config.yaml'),
             os.path.join(os.path.dirname(__file__), 'config.yml')
         ]
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                return path
-                
-        raise ConfigurationError(
+        try:
+            return find_config_file(possible_paths)
+        except FileNotFoundError:
+            raise ConfigurationError(
             "No configuration file found",
             context={
                 'searched_paths': possible_paths,
@@ -262,18 +261,11 @@ class NFLConfigManager:
             return
         
         logger.debug(f"Applying {self.environment} environment overrides")
-        self._deep_merge(self._raw_config, env_config)
+        deep_merge(self._raw_config, env_config)
     
     def _deep_merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
         """Recursively merge override configuration into base."""
-        for key, value in override.items():
-            if key == 'environments':
-                continue  # Skip environments section in overrides
-                
-            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-                self._deep_merge(base[key], value)
-            else:
-                base[key] = value
+        deep_merge(base, override)
     
     def _build_typed_config(self) -> NFLModelConfig:
         """Build typed configuration from raw dictionary."""
@@ -395,8 +387,7 @@ class NFLConfigManager:
             errors.append(f"Invalid week range: {week_range}")
         
         # Validate logging level
-        valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
-        if self._config.logging.level.upper() not in valid_levels:
+        if not validate_logging_level(self._config.logging.level):
             errors.append(f"Invalid logging level: {self._config.logging.level}")
         
         if errors:
