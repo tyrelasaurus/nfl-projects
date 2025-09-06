@@ -1,5 +1,21 @@
 ## Implementation Recommendation Plan
 
+Status (as of latest commit):
+- Core backtests (winners, spreads) with per-game CSVs and filterable HTML are implemented.
+- Multi-season winners backtests exist (`backtest/backtest_winners_multi.py`).
+- Calibration v1 implemented: margin scaling (a,b with piecewise blend) and HFA tuning; parameters stored in `calibration/params.yaml`.
+- Probability calibration implemented (`calibration/calibrate_probabilities.py`) with isotonic mapping stored in params.
+- Hyperparameter sweep implemented (`calibration/sweep_params.py`); tuned weights applied in runner.
+- Residual analytics dashboard implemented (`calibration/residual_analytics.py`).
+- Runner integrates calibrated margins, tuned HFA/weights, and calibrated probabilities (`run_full_projects.py`).
+
+Gaps and next steps:
+- CI: Add GitHub Actions to run tests and a small smoke check.
+- Aggregation: Generate a consolidated multi-season index page and optional folded CSV summarizing season-level metrics.
+- Feature flags: Add `enable_calibration` and `use_calibrated_probability` toggles in params/config and honor them in the runner.
+- Experiment tracking: Add an `experiments/` folder convention and document artifact layout; optionally add helpers.
+- Parameter versioning: Add a lightweight version/hash note to `calibration/params.yaml` and log it in runner output.
+
 - Objective: Improve winner and spread prediction accuracy through calibrated power scores, tuned home-field advantage, and robust validation, while keeping the system simple and transparent.
 - Outcomes: Calibrated projections, reproducible backtests, clear dashboards, and a controlled release process with measurable accuracy and MAE gains.
 
@@ -28,6 +44,7 @@
 ## Implementation Phases
 
 ### 1) Data & Backtest Foundation (stabilize and extend)
+Status: foundational pieces are implemented; add consolidated index + folded CSV.
 - Enhance backtest outputs (done): actual margin, final score, coverage vs predicted spread, HTML filters (week/team/position/predicted side/coverage).
 - Add multi-season runs (2021–2024), script to aggregate results across seasons.
 - Deliverables:
@@ -35,6 +52,7 @@
   - Folded summary CSV (season-level rows) + consolidated HTML index
 
 ### 2) Calibration v1: Margin Scaling & HFA Tuning
+Status: implemented (a,b + blend; HFA tuned; applied in runner).
 - Implement calibrate_margins.py
   - Input: per-game winners backtest CSVs
   - Output: a, b for linear scaling; residual diagnostics
@@ -48,6 +66,7 @@
   - MAE reduction vs baseline; stable across seasons (no overfit)
 
 ### 3) Hyperparameter Tuning: last-N & Weights
+Status: implemented; tuned weights applied; keep sweep helper for future seasons.
 - Implement sweep_params.py
   - Sweep last_n ∈ {8, 10, 12, 14, 17}
   - Optional grid: weights for season_avg_margin, rolling_avg_margin, sos, recency_factor
@@ -57,6 +76,7 @@
   - Improvement sustained across multiple seasons; minimal complexity added
 
 ### 4) Residual Analytics & Dashboards
+Status: implemented; continue to review segments and document action items.
 - Build residual_analytics.py:
   - Segment residuals by: home/away, spread magnitude buckets, week number, team, stadium, weather proxies (if available later)
   - Output: HTML dashboards with tables/plots (Plotly/Altair)
@@ -65,6 +85,7 @@
   - Clear insights + action items; segments with significant bias (p<0.05 or effect size threshold)
 
 ### 5) Probability Calibration (Winners)
+Status: implemented (isotonic); integrated into runner.
 - Fit isotonic regression mapping |projected margin| → P(home win)
 - Validate with Brier score/log loss; produce calibration plots (reliability curves)
 - Integrate: produce calibrated win probabilities with projections
@@ -81,6 +102,7 @@
   - Documented thresholds with historical performance; toggle in runner
 
 ### 7) Validation & Release
+Next: add CI smoke test, parameter flags, and README updates with calibrated parameters and results.
 - Multi-season CV summary; hold-out season confirmation
 - Update README with calibrated parameters and results
 - CI smoke test: short backtest slice, schema and HTML generation checks
@@ -157,4 +179,3 @@
 - MAE vs actual margin: measurable reduction after calibration
 - Calibrated probability: improved Brier/log loss
 - Edge thresholds: historical cover > 52.4% for selected bins (spreads backtest)
-

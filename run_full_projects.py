@@ -139,17 +139,28 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
     calib_path = os.path.join(os.getcwd(), 'calibration', 'params.yaml')
     a, b = 0.0, 1.0
     hfa = 2.0
+    prob_map = None
     blend = {'low': 3.0, 'high': 7.0}
+    enable_calibration = True
+    use_calibrated_probability = True
+    params_version = None
     try:
         if os.path.exists(calib_path):
             with open(calib_path, 'r') as f:
                 cfg = yaml.safe_load(f) or {}
-                a = float(cfg.get('calibration', {}).get('margin', {}).get('a', 0.0))
+                params_version = cfg.get('version')
+                cal_cfg = cfg.get('calibration', {})
+                a = float(cal_cfg.get('margin', {}).get('a', 0.0))
                 b = float(cfg.get('calibration', {}).get('margin', {}).get('b', 1.0))
                 hfa = float(cfg.get('model', {}).get('hfa', 2.0))
-                bl = cfg.get('calibration', {}).get('blend', {})
+                bl = cal_cfg.get('blend', {})
                 blend['low'] = float(bl.get('low', 3.0))
                 blend['high'] = float(bl.get('high', 7.0))
+                enable_calibration = bool(cal_cfg.get('enable_calibration', True))
+                use_calibrated_probability = bool(cal_cfg.get('use_calibrated_probability', True))
+                prob = cal_cfg.get('probability')
+                if prob and isinstance(prob.get('x'), list) and isinstance(prob.get('p'), list):
+                    prob_map = {'x': [float(v) for v in prob['x']], 'p': [float(v) for v in prob['p']]}
     except Exception:
         pass
 
@@ -157,6 +168,8 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
     results = calc.calculate_week_spreads(matchups, power, week)
 
     def calibrated_value(raw: float) -> float:
+        if not enable_calibration:
+            return raw
         cal = a + b * raw
         lo, hi = blend['low'], blend['high']
         mag = abs(raw)
@@ -167,11 +180,29 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
         t = (mag - lo) / (hi - lo)
         return (1 - t) * raw + t * cal
 
+    def prob_home_from_margin(m: float) -> float:
+        if use_calibrated_probability and prob_map:
+            xs = prob_map['x']
+            ps = prob_map['p']
+            if m <= xs[0]:
+                return ps[0]
+            if m >= xs[-1]:
+                return ps[-1]
+            import bisect
+            i = bisect.bisect_left(xs, m)
+            x0,x1 = xs[i-1], xs[i]
+            p0,p1 = ps[i-1], ps[i]
+            t = (m - x0)/(x1 - x0) if x1!=x0 else 0.0
+            return p0 + t*(p1 - p0)
+        # fallback sigmoid
+        import math
+        return 1/(1+math.exp(-m/3.5))
+
     # Write a CSV
     spreads_csv = os.path.join(output_dir, f'spreads_week_{week}.csv')
     with open(spreads_csv, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['week', 'home_team', 'away_team', 'projected_spread_raw', 'projected_spread', 'betting_line', 'market_spread', 'market_line', 'edge', 'game_date'])
+        writer.writerow(['week', 'home_team', 'away_team', 'projected_spread_raw', 'projected_spread', 'home_win_prob', 'betting_line', 'market_spread', 'market_line', 'edge', 'game_date'])
         for r in results:
             mk = None
             ml = None
@@ -185,7 +216,7 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
                         edge = calibrated_value(r.projected_spread) - mk
             writer.writerow([
                 r.week, r.home_team, r.away_team, f"{r.projected_spread:.1f}",
-                f"{calibrated_value(r.projected_spread):.1f}",
+                f"{calibrated_value(r.projected_spread):.1f}", f"{prob_home_from_margin(calibrated_value(r.projected_spread)):.3f}",
                 calc.format_spread_as_betting_line(calibrated_value(r.projected_spread), r.home_team),
                 (f"{mk:.1f}" if isinstance(mk, (int, float)) else ''),
                 (ml or ''),
@@ -201,6 +232,7 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
             'away_team': r.away_team,
             'projected_spread_raw': r.projected_spread,
             'projected_spread': calibrated_value(r.projected_spread),
+            'home_win_prob': prob_home_from_margin(calibrated_value(r.projected_spread)),
             'betting_line': calc.format_spread_as_betting_line(calibrated_value(r.projected_spread), r.home_team),
             'market_spread': (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_spread'),
             'market_line': (odds_map or {}).get((r.home_team, r.away_team), {}).get('market_line'),
