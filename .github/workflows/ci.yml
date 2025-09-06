@@ -23,12 +23,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r power_ranking/requirements.txt
           pip install -r requirements-test.txt
+          pip install flake8
 
       - name: Run tests
         run: |
           pytest -q --disable-warnings --maxfail=1
 
+      - name: Lint (flake8)
+        run: |
+          flake8 . --max-line-length=120 --extend-ignore=E203,W503 || true
+
       - name: Backtests index build (smoke)
         run: |
           python -m backtest.build_index --dir ./backtests || true
 
+      - name: Offline smoke (deterministic)
+        run: |
+          python scripts/smoke_offline.py

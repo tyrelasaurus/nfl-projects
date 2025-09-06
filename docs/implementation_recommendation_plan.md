@@ -138,6 +138,7 @@ Next: add CI smoke test, parameter flags, and README updates with calibrated par
     - params.json (last_n, hfa, weights, a/b)
     - results.csv (summary)
   - Keep a CHANGELOG.md section for parameter updates
+  - Folder convention documented in docs/experiments.md
 - Parameter Versioning:
   - All tuned params live in YAML with version tag
   - Runner logs parameter set hash in outputs

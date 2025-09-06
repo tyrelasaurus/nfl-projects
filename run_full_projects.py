@@ -18,6 +18,7 @@ import csv
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Any
 import yaml
+import hashlib
 
 
 def ensure_abs(path: str) -> str:
@@ -391,7 +392,9 @@ def write_summary_html(output_dir: str,
                        computation: Dict[str, Any],
                        spreads: List[Dict],
                        week: int,
-                       last_n: int) -> str:
+                       last_n: int,
+                       params_version: Any | None = None,
+                       params_hash: str | None = None) -> str:
     path = os.path.join(output_dir, f'summary_week_{week}_last{last_n}.html')
     ts = datetime.now(timezone.utc).isoformat()
     html = [
@@ -401,6 +404,7 @@ def write_summary_html(output_dir: str,
         "</head><body>",
         f"<h1>NFL Projects Summary - Week {week} (Last {last_n} games)</h1>",
         f"<p>Generated: {ts} UTC</p>",
+        (f"<p>Calibration Params — version: {params_version}, hash: {params_hash}</p>" if (params_version is not None or params_hash is not None) else ""),
         "<h2>Power Rankings (All Teams)</h2>",
         "<table><tr>"
         "<th>Rank</th><th>Team</th><th>Power</th>"
@@ -494,10 +498,26 @@ def main():
 
     # 3) Combined summary CSV and HTML
     summary_csv = write_summary_csv(output_dir, rankings, computation, spreads, target_week, args.last_n)
-    summary_html = write_summary_html(output_dir, rankings, computation, spreads, target_week, args.last_n)
+    # Compute params info for logging and HTML if available
+    calib_path = os.path.join(os.getcwd(), 'calibration', 'params.yaml')
+    params_version = None
+    params_hash = None
+    try:
+        if os.path.exists(calib_path):
+            with open(calib_path, 'r') as f:
+                cfg = yaml.safe_load(f) or {}
+                params_version = cfg.get('version')
+            with open(calib_path, 'rb') as fb:
+                params_hash = hashlib.sha256(fb.read()).hexdigest()[:12]
+    except Exception:
+        pass
+    summary_html = write_summary_html(output_dir, rankings, computation, spreads, target_week, args.last_n,
+                                      params_version=params_version, params_hash=params_hash)
     print("\n=== Summary Artifacts ===")
     print(f"Summary CSV:  {summary_csv}")
     print(f"Summary HTML: {summary_html}")
+    if params_version is not None or params_hash is not None:
+        print(f"Params: version={params_version if params_version is not None else 'n/a'}, hash={params_hash if params_hash else 'n/a'}")
 
 
 if __name__ == '__main__':

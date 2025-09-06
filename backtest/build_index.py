@@ -18,6 +18,7 @@ def build_index(backtests_dir: str) -> str:
     os.makedirs(d, exist_ok=True)
     winners_pages = sorted(glob.glob(os.path.join(d, 'backtest_winners_summary_*_*.html')))
     summary_pages = sorted(glob.glob(os.path.join(d, 'backtest_summary_*_*.html')))
+    seasons_csv = os.path.join(d, 'winners_seasons_summary.csv')
 
     def rel(p: str) -> str:
         return os.path.basename(p)
@@ -42,6 +43,27 @@ def build_index(backtests_dir: str) -> str:
         html.append("</table>")
     else:
         html.append("<p>No winners summaries found.</p>")
+
+    if os.path.exists(seasons_csv):
+        html.append("<h2>Folded Season Summary</h2>")
+        html.append(f"<p><a href='{os.path.basename(seasons_csv)}'>winners_seasons_summary.csv</a></p>")
+        # Render a small table preview
+        try:
+            import csv as _csv
+            rows = []
+            with open(seasons_csv, 'r') as _f:
+                r = _csv.DictReader(_f)
+                for i, row in enumerate(r):
+                    if i < 10:
+                        rows.append(row)
+            html.append("<table><tr><th>Season</th><th>Games</th><th>Wins</th><th>Losses</th><th>Pushes</th><th>Accuracy</th><th>Cover Rate</th></tr>")
+            for row in rows:
+                html.append(
+                    f"<tr><td>{row['season']}</td><td>{row['games']}</td><td>{row['wins']}</td><td>{row['losses']}</td><td>{row['pushes']}</td><td>{float(row['accuracy']):.3f}</td><td>{(float(row['cover_rate']):.3f) if row['cover_rate'] not in ('', None) else ''}</td></tr>"
+                )
+            html.append("</table>")
+        except Exception:
+            pass
 
     html.append("<h2>Recent Backtest Summaries</h2>")
     if summary_pages:
@@ -70,4 +92,3 @@ def main():
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
