@@ -58,8 +58,13 @@ def build_index(backtests_dir: str) -> str:
                         rows.append(row)
             html.append("<table><tr><th>Season</th><th>Games</th><th>Wins</th><th>Losses</th><th>Pushes</th><th>Accuracy</th><th>Cover Rate</th></tr>")
             for row in rows:
+                # Handle cover_rate formatting safely
+                cover_rate_val = ''
+                if row['cover_rate'] not in ('', None):
+                    cover_rate_val = f"{float(row['cover_rate']):.3f}"
+                
                 html.append(
-                    f"<tr><td>{row['season']}</td><td>{row['games']}</td><td>{row['wins']}</td><td>{row['losses']}</td><td>{row['pushes']}</td><td>{float(row['accuracy']):.3f}</td><td>{(float(row['cover_rate']):.3f) if row['cover_rate'] not in ('', None) else ''}</td></tr>"
+                    f"<tr><td>{row['season']}</td><td>{row['games']}</td><td>{row['wins']}</td><td>{row['losses']}</td><td>{row['pushes']}</td><td>{float(row['accuracy']):.3f}</td><td>{cover_rate_val}</td></tr>"
                 )
             html.append("</table>")
         except Exception:

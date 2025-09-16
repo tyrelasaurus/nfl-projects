@@ -67,37 +67,57 @@ def run_power_rankings(week: int | None, last_n: int, output_dir: str) -> Tuple[
 
     model = PowerRankModel(weights=tuned_weights) if tuned_weights else PowerRankModel()
 
-    # Determine week
+    # Determine target week and load teams
     if week is None:
         week = client.get_current_week()
 
     teams = client.get_teams()
 
-    # Fetch current and last completed season; merge for last-N
-    current = client.get_scoreboard(week=week)
+    # Collect all completed current-season games through the requested week
+    merged_ids: set[str] = set()
+    current_events: List[Dict[str, Any]] = []
+    for w in range(1, max(1, int(week)) + 1):
+        try:
+            sb = client.get_scoreboard(week=w)
+        except Exception:
+            continue
+        for ev in (sb.get('events') or []):
+            # Keep only completed games
+            status_name = (ev.get('status') or {}).get('type', {}).get('name')
+            if status_name != 'STATUS_FINAL':
+                continue
+            eid = str(ev.get('id'))
+            if eid in merged_ids:
+                continue
+            # Ensure week_number present for downstream logic/exports
+            wk_info = ev.get('week') or {}
+            ev.setdefault('week_number', wk_info.get('number', w))
+            current_events.append(ev)
+            merged_ids.add(eid)
+
+    # Append previous season to allow last-N to reach back into prior year
     try:
         last_year = client.get_last_completed_season()
         last_season = client.get_season_final_rankings(last_year)
     except Exception:
         last_season = None
 
-    if not client.has_current_season_games(week=week):
-        merged = last_season or current or {'events': []}
-    else:
-        merged_ids = set()
-        merged_events = []
-        for ev in (current.get('events') or []):
+    if last_season and last_season.get('events'):
+        for ev in (last_season.get('events') or []):
             eid = str(ev.get('id'))
-            if eid not in merged_ids:
-                merged_events.append(ev)
-                merged_ids.add(eid)
-        if last_season and last_season.get('events'):
-            for ev in last_season['events']:
-                eid = str(ev.get('id'))
-                if eid not in merged_ids:
-                    merged_events.append(ev)
-                    merged_ids.add(eid)
-        merged = {'events': merged_events, 'week': current.get('week') or {'number': week}}
+            if eid in merged_ids:
+                continue
+            # Keep only completed games if status is present; otherwise assume completed for historical
+            status_name = (ev.get('status') or {}).get('type', {}).get('name') if isinstance(ev, dict) else None
+            if status_name and status_name != 'STATUS_FINAL':
+                continue
+            current_events.append(ev)
+            merged_ids.add(eid)
+
+    merged = {
+        'events': current_events,
+        'week': {'number': week},
+    }
 
     rankings, computation = model.compute(merged, teams, last_n_games=last_n)
     exporter = CSVExporter(output_dir)
