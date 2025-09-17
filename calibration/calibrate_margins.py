@@ -21,6 +21,8 @@ import yaml
 import pandas as pd
 from typing import List
 
+VALID_LEAGUES = ('nfl', 'ncaa')
+
 
 def load_csvs(paths: List[str]) -> pd.DataFrame:
     frames = []
@@ -49,7 +51,16 @@ def fit_linear(df: pd.DataFrame):
     return float(a), float(b), mae
 
 
-def update_params_yaml(a: float, b: float, path: str = 'calibration/params.yaml'):
+def resolve_params_path(league: str | None, override: str | None) -> str:
+    if override:
+        return override
+    lg = (league or 'nfl').lower()
+    if lg not in VALID_LEAGUES:
+        raise ValueError(f"Unsupported league '{league}'. Choose from {VALID_LEAGUES}.")
+    return 'calibration/params.yaml' if lg == 'nfl' else f'calibration/{lg}_params.yaml'
+
+
+def update_params_yaml(a: float, b: float, path: str):
     data = {}
     if os.path.exists(path):
         with open(path, 'r') as f:
@@ -65,17 +76,19 @@ def update_params_yaml(a: float, b: float, path: str = 'calibration/params.yaml'
 def main():
     ap = argparse.ArgumentParser(description='Calibrate margin scaling (actual ≈ a + b * projected)')
     ap.add_argument('--inputs', nargs='+', required=True, help='Glob patterns for backtest winners CSVs')
-    ap.add_argument('--write', action='store_true', help='Write a,b to calibration/params.yaml')
+    ap.add_argument('--league', choices=VALID_LEAGUES, help='League for params convenience (default: nfl)')
+    ap.add_argument('--params-path', help='Explicit params YAML path (overrides --league)')
+    ap.add_argument('--write', action='store_true', help='Write a,b to the resolved params YAML')
     args = ap.parse_args()
 
     df = load_csvs(args.inputs)
     a, b, mae = fit_linear(df)
     print(f"Fitted margin scaling: actual ≈ {a:.3f} + {b:.3f} * projected (MAE={mae:.3f})")
     if args.write:
-        update_params_yaml(a, b)
-        print("Updated calibration/params.yaml")
+        params_path = resolve_params_path(args.league, args.params_path)
+        update_params_yaml(a, b, params_path)
+        print(f"Updated {params_path}")
 
 
 if __name__ == '__main__':
     sys.exit(main())
-

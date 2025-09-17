@@ -1,10 +1,10 @@
 # NFL Projects Suite
 
-A comprehensive suite of NFL analytics tools including Power Rankings System and NFL Spread Model, built with enterprise-grade monitoring, validation, and optimization capabilities.
+A comprehensive suite of football analytics tools including NFL Power Rankings & Spread Model plus a newly added NCAA FBS variant, built with enterprise-grade monitoring, validation, and optimization capabilities.
 
 ## 🏈 Project Overview
 
-This repository contains two integrated NFL analytics systems:
+This repository contains two integrated analytics systems (NFL + NCAA FBS):
 
 ### **Power Rankings System**
 Advanced NFL team power rankings using multi-factor statistical analysis:
@@ -95,6 +95,15 @@ python -m power_ranking.power_ranking.cli --dry-run
 python -m power_ranking.power_ranking.cli --week 1 --last-n 17
 ```
 
+Full pipeline runner (automates rankings + spreads + summary):
+```bash
+# NFL (default)
+python run_full_projects.py --league nfl --week 4 --last-n 17 --output ./output
+
+# NCAA FBS (uses new NCAA client/package)
+python run_full_projects.py --league ncaa --week 3 --last-n 12 --output ./output
+```
+
 ### Calibration & Backtests
 - Calibrate margin scaling (a,b) and HFA from winners backtests:
   - `python -m calibration.calibrate_margins --inputs backtests/backtest_winners_*.csv --write`
@@ -106,6 +115,17 @@ python -m power_ranking.power_ranking.cli --week 1 --last-n 17
 - Hyperparameter sweep (last-N & weights):
   - `python -m calibration.sweep_params --seasons 2021-2024 --use-calibration --output ./backtests`
   - Open `backtests/sweep_params_*.html` to compare configs.
+
+### Quick Command Reference
+- **Run NFL weekly pipeline**: `python run_full_projects.py --league nfl --week 4 --last-n 17 --output ./output`
+- **Run NCAA weekly pipeline**: `python run_full_projects.py --league ncaa --week 4 --last-n 12 --output ./output`
+- **Single-season winners backtest**: `python -m backtest.backtest_winners --league ncaa --season 2024 --last-n 12 --output ./backtests`
+- **Multi-season winners backtest**: `python -m backtest.backtest_winners_multi --league ncaa --seasons 2021 2022 2023 2024 --last-n 12 --output ./backtests`
+- **Aggregate season summaries**: `python -m backtest.aggregate_seasons --league ncaa --dir ./backtests`
+- **Rebuild backtest index**: `python -m backtest.build_index --dir ./backtests`
+- **Calibrate NCAA margins**: `python -m calibration.calibrate_margins --inputs backtests/backtest_winners_ncaa_202?_*.csv --league ncaa --write`
+- **Calibrate NCAA HFA**: `python -m calibration.tune_hfa --inputs backtests/backtest_winners_ncaa_202?_*.csv --league ncaa --hfa-used 3.0 --min 0.0 --max 5.0 --step 0.1 --write`
+- **NFL calibration equivalents**: `python -m calibration.calibrate_margins --inputs backtests/backtest_winners_*.csv --league nfl --write`
 
 ### What’s Tuned by Default
 - Weights (season-heavy): `season_avg_margin=0.55, rolling_avg_margin=0.20, sos=0.20, recency_factor=0.05`
@@ -315,3 +335,4 @@ This project is developed for educational and analytical purposes. See license f
 **Built with enterprise-grade standards for production deployment and team collaboration.**
 
 *Last updated: September 5, 2025*
+- A parallel `ncaa_model` package reuses the same pipeline with NCAA-friendly defaults (3.0 HFA, 60+ game slates) and ESPN college-football endpoints.

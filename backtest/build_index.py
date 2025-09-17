@@ -18,7 +18,7 @@ def build_index(backtests_dir: str) -> str:
     os.makedirs(d, exist_ok=True)
     winners_pages = sorted(glob.glob(os.path.join(d, 'backtest_winners_summary_*_*.html')))
     summary_pages = sorted(glob.glob(os.path.join(d, 'backtest_summary_*_*.html')))
-    seasons_csv = os.path.join(d, 'winners_seasons_summary.csv')
+    season_summaries = sorted(glob.glob(os.path.join(d, 'winners_seasons_summary*.csv')))
 
     def rel(p: str) -> str:
         return os.path.basename(p)
@@ -34,41 +34,64 @@ def build_index(backtests_dir: str) -> str:
 
     html.append("<h2>Winners (Per-Season) Summaries</h2>")
     if winners_pages:
-        html.append("<table><tr><th>Season</th><th>File</th></tr>")
+        html.append("<table><tr><th>League</th><th>Season</th><th>File</th></tr>")
         for p in winners_pages:
             base = rel(p)
-            # Expect file like backtest_winners_summary_YYYY_TS.html
-            season = base.split('_')[3] if len(base.split('_')) >= 4 else ''
-            html.append(f"<tr><td>{season}</td><td><a href='{base}'>{base}</a></td></tr>")
+            parts = base.split('_')
+            league = 'nfl'
+            season = ''
+            if len(parts) >= 5 and parts[0] == 'backtest' and parts[1] == 'winners' and parts[2] == 'summary':
+                maybe_league = parts[3]
+                if maybe_league.isdigit():
+                    season = maybe_league
+                else:
+                    league = maybe_league
+                    if len(parts) >= 6:
+                        season = parts[4]
+            html.append(f"<tr><td>{league.upper()}</td><td>{season}</td><td><a href='{base}'>{base}</a></td></tr>")
         html.append("</table>")
     else:
         html.append("<p>No winners summaries found.</p>")
 
-    if os.path.exists(seasons_csv):
-        html.append("<h2>Folded Season Summary</h2>")
-        html.append(f"<p><a href='{os.path.basename(seasons_csv)}'>winners_seasons_summary.csv</a></p>")
-        # Render a small table preview
-        try:
-            import csv as _csv
-            rows = []
-            with open(seasons_csv, 'r') as _f:
-                r = _csv.DictReader(_f)
-                for i, row in enumerate(r):
-                    if i < 10:
-                        rows.append(row)
-            html.append("<table><tr><th>Season</th><th>Games</th><th>Wins</th><th>Losses</th><th>Pushes</th><th>Accuracy</th><th>Cover Rate</th></tr>")
-            for row in rows:
-                # Handle cover_rate formatting safely
-                cover_rate_val = ''
-                if row['cover_rate'] not in ('', None):
-                    cover_rate_val = f"{float(row['cover_rate']):.3f}"
-                
-                html.append(
-                    f"<tr><td>{row['season']}</td><td>{row['games']}</td><td>{row['wins']}</td><td>{row['losses']}</td><td>{row['pushes']}</td><td>{float(row['accuracy']):.3f}</td><td>{cover_rate_val}</td></tr>"
-                )
-            html.append("</table>")
-        except Exception:
-            pass
+    if season_summaries:
+        html.append("<h2>Folded Season Summaries</h2>")
+        for seasons_csv in season_summaries:
+            base_csv = os.path.basename(seasons_csv)
+            html.append(f"<h3>{base_csv}</h3>")
+            html.append(f"<p><a href='{base_csv}'>{base_csv}</a></p>")
+            try:
+                import csv as _csv
+                rows = []
+                with open(seasons_csv, 'r') as _f:
+                    r = _csv.DictReader(_f)
+                    for i, row in enumerate(r):
+                        if i < 10:
+                            rows.append(row)
+                headers = ['league', 'season', 'games', 'wins', 'losses', 'pushes', 'accuracy', 'cover_rate']
+                html.append("<table><tr>" + ''.join(f"<th>{h.title()}</th>" for h in headers) + "</tr>")
+                for row in rows:
+                    cover_rate_val = ''
+                    try:
+                        cv = row.get('cover_rate')
+                        if cv not in ('', None):
+                            cover_rate_val = f"{float(cv):.3f}"
+                    except Exception:
+                        cover_rate_val = row.get('cover_rate', '')
+                    html.append(
+                        "<tr>"
+                        f"<td>{row.get('league', 'N/A')}</td>"
+                        f"<td>{row.get('season', '')}</td>"
+                        f"<td>{row.get('games', '')}</td>"
+                        f"<td>{row.get('wins', '')}</td>"
+                        f"<td>{row.get('losses', '')}</td>"
+                        f"<td>{row.get('pushes', '')}</td>"
+                        f"<td>{float(row.get('accuracy', 0.0)):.3f}</td>"
+                        f"<td>{cover_rate_val}</td>"
+                        "</tr>"
+                    )
+                html.append("</table>")
+            except Exception:
+                pass
 
     html.append("<h2>Recent Backtest Summaries</h2>")
     if summary_pages:

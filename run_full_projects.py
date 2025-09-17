@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-End-to-end runner for NFL Projects Suite.
+End-to-end runner for the Projects Suite (NFL + NCAA).
 
-Executes the Power Rankings suite and then the NFL Spread Model suite, and
-prints results to the terminal while also exporting a consolidated CSV and
+Executes the Power Rankings suite and corresponding spread model for the
+requested league, printing results while exporting a consolidated CSV and
 an HTML summary page.
 
 Usage examples:
-  python run_full_projects.py --week 1 --last-n 17 --output ./output
-  python run_full_projects.py --week 1 --last-n 17 --schedule test_schedule.csv
+  python run_full_projects.py --week 1 --league nfl --last-n 17 --output ./output
+  python run_full_projects.py --week 1 --league ncaa --schedule test_schedule.csv
 """
 
 import argparse
@@ -25,8 +25,21 @@ def ensure_abs(path: str) -> str:
     return os.path.abspath(os.path.expanduser(path))
 
 
-def build_team_abbr_map() -> Dict[str, str]:
-    """Map full team names to standard abbreviations for nfl_model compatibility."""
+def build_team_abbr_map(league: str, teams: List[Dict[str, Any]] | None = None) -> Dict[str, str]:
+    """Map full team names to standard abbreviations for downstream loaders."""
+
+    lg = (league or 'nfl').lower()
+    if lg in {'ncaa', 'college', 'college-football'}:
+        mapping: Dict[str, str] = {}
+        for entry in teams or []:
+            info = entry.get('team') if isinstance(entry, dict) else None
+            info = info or entry
+            name = (info or {}).get('displayName') or (info or {}).get('name')
+            abbr = (info or {}).get('abbreviation') or (info or {}).get('shortDisplayName')
+            if name:
+                mapping[name] = abbr or name
+        return mapping
+
     return {
         'Arizona Cardinals': 'ARI', 'Atlanta Falcons': 'ATL', 'Baltimore Ravens': 'BAL',
         'Buffalo Bills': 'BUF', 'Carolina Panthers': 'CAR', 'Chicago Bears': 'CHI',
@@ -42,13 +55,16 @@ def build_team_abbr_map() -> Dict[str, str]:
     }
 
 
-def run_power_rankings(week: int | None, last_n: int, output_dir: str) -> Tuple[str, List[Tuple[str, str, float]], Dict[str, Any]]:
-    """Run power rankings and return (csv_path, rankings, computation_data)."""
+def run_power_rankings(week: int | None,
+                       last_n: int,
+                       output_dir: str,
+                       league: str) -> Tuple[str, List[Tuple[str, str, float]], Dict[str, Any], List[Dict[str, Any]]]:
+    """Run power rankings and return (csv_path, rankings, computation_data, teams)."""
     from power_ranking.power_ranking.api.client_factory import get_client
     from power_ranking.power_ranking.models.power_rankings import PowerRankModel
     from power_ranking.power_ranking.export.csv_exporter import CSVExporter
 
-    client = get_client('sync')
+    client = get_client('sync', league=league)
     # Load tuned weights if present
     tuned_weights = None
     try:
@@ -66,6 +82,18 @@ def run_power_rankings(week: int | None, last_n: int, output_dir: str) -> Tuple[
         tuned_weights = None
 
     model = PowerRankModel(weights=tuned_weights) if tuned_weights else PowerRankModel()
+
+    def _extract_team_names(events: List[Dict[str, Any]] | None) -> Dict[str, str]:
+        mapping: Dict[str, str] = {}
+        for ev in events or []:
+            for comp in ev.get('competitions') or []:
+                for competitor in comp.get('competitors') or []:
+                    team = competitor.get('team') or {}
+                    tid = team.get('id')
+                    name = team.get('displayName') or team.get('name')
+                    if tid and name:
+                        mapping.setdefault(str(tid), str(name))
+        return mapping
 
     # Determine target week and load teams
     if week is None:
@@ -120,36 +148,100 @@ def run_power_rankings(week: int | None, last_n: int, output_dir: str) -> Tuple[
     }
 
     rankings, computation = model.compute(merged, teams, last_n_games=last_n)
+    combined_team_map: Dict[str, str] = {}
+    combined_team_map.update(computation.get('teams_map', {}))
+    combined_team_map.update(_extract_team_names(current_events))
+    if last_season and isinstance(last_season, dict):
+        combined_team_map.update(_extract_team_names(last_season.get('events')))
+    computation['teams_map'] = combined_team_map
+    rankings = [
+        (team_id, combined_team_map.get(team_id, team_name), score)
+        for team_id, team_name, score in rankings
+    ]
     exporter = CSVExporter(output_dir)
     # Use a friendly export name
-    export_week = f"week_{week}_last{last_n}"
+    export_week = f"{league.lower()}_week_{week}_last{last_n}"
     csv_path = exporter.export_rankings(rankings, export_week)
-    return csv_path, rankings, computation
+    return csv_path, rankings, computation, teams
 
 
-def make_abbrev_power_csv(full_power_csv: str, output_dir: str) -> str:
-    """Convert full-name power CSV to abbreviation-based CSV for nfl_model."""
+def prepare_power_csv(full_power_csv: str,
+                      output_dir: str,
+                      league: str,
+                      teams: List[Dict[str, Any]] | None = None,
+                      teams_map: Dict[str, str] | None = None) -> str:
+    """Normalize power ranking CSV for downstream spread models."""
     import pandas as pd
 
-    abbr_map = build_team_abbr_map()
     df = pd.read_csv(full_power_csv)
-    # Expect columns: team_id, team_name, power_score
-    df_abbr = df.copy()
-    df_abbr['team_name'] = df_abbr['team_name'].map(lambda n: abbr_map.get(n, n))
-    out_path = os.path.join(output_dir, 'power_rankings_abbr.csv')
-    df_abbr[['team_name', 'power_score']].to_csv(out_path, index=False)
+    lg = (league or 'nfl').lower()
+    abbr_map = build_team_abbr_map(lg, teams)
+
+    if lg == 'nfl':
+        df_abbr = df.copy()
+        df_abbr['team_name'] = df_abbr['team_name'].map(lambda n: abbr_map.get(n, n))
+        out_path = os.path.join(output_dir, 'power_rankings_abbr.csv')
+        df_abbr[['team_name', 'power_score']].to_csv(out_path, index=False)
+        return out_path
+
+    # NCAA: keep descriptive names for schedule alignment, but emit abbreviations as helper column
+    df_ncaa = df.copy()
+    id_to_name: Dict[str, str] = {}
+    if teams_map:
+        id_to_name.update({str(k): str(v) for k, v in teams_map.items()})
+
+    id_to_abbr: Dict[str, str] = {}
+    for entry in teams or []:
+        team = entry.get('team') if isinstance(entry, dict) else None
+        team = team or entry
+        tid = team.get('id') if isinstance(team, dict) else None
+        if not tid:
+            continue
+        tid_str = str(tid)
+        display = str(team.get('displayName') or team.get('name') or id_to_name.get(tid_str, tid_str))
+        abbr = str(team.get('abbreviation') or team.get('shortDisplayName') or display)
+        id_to_name.setdefault(tid_str, display)
+        id_to_abbr[tid_str] = abbr
+
+    if 'team_id' in df_ncaa.columns:
+        df_ncaa['team_id'] = df_ncaa['team_id'].astype(str)
+        df_ncaa['team_name'] = df_ncaa['team_id'].map(id_to_name).fillna(df_ncaa.get('team_name'))
+        df_ncaa['team_abbr'] = df_ncaa['team_id'].map(lambda tid: id_to_abbr.get(tid, abbr_map.get(id_to_name.get(tid, ''), id_to_name.get(tid, tid))))
+    else:
+        df_ncaa['team_name'] = df_ncaa['team_name'].astype(str).map(lambda n: id_to_name.get(n, n))
+        df_ncaa['team_abbr'] = df_ncaa['team_name'].map(lambda n: abbr_map.get(n, n))
+
+    df_ncaa['team_name'] = df_ncaa['team_name'].astype(str)
+    if abbr_map and 'team_abbr' not in df_ncaa:
+        df_ncaa['team_abbr'] = df_ncaa['team_name'].map(lambda n: abbr_map.get(n, n))
+    out_path = os.path.join(output_dir, 'power_rankings_ncaa.csv')
+    df_ncaa[['team_name', 'power_score']].to_csv(out_path, index=False)
     return out_path
 
 
-def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: str,
+def run_spread_model(power_csv: str,
+                     schedule_csv: str,
+                     week: int,
+                     output_dir: str,
+                     league: str,
                      odds_map: Dict[Tuple[str, str], Dict[str, Any]] | None = None) -> Tuple[str, List[Dict]]:
-    """Run nfl_model spreads using provided power rankings and schedule.
+    """Run league-specific spread model using provided power rankings and schedule.
 
     Returns (spreads_csv_path, results_list_of_dicts)
     """
     import pandas as pd
-    from nfl_model.spread_model import SpreadCalculator
-    from nfl_model.data_loader import DataLoader
+
+    lg = (league or 'nfl').lower()
+    if lg == 'ncaa':
+        from ncaa_model.spread_model import SpreadCalculator
+        from ncaa_model.data_loader import DataLoader
+        calib_filename = 'ncaa_params.yaml'
+        default_hfa = 3.0
+    else:
+        from nfl_model.spread_model import SpreadCalculator
+        from nfl_model.data_loader import DataLoader
+        calib_filename = 'params.yaml'
+        default_hfa = 2.0
 
     loader = DataLoader(power_csv, schedule_csv)
     power = loader.load_power_rankings()
@@ -157,9 +249,9 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
     matchups = [(r.home_team, r.away_team, getattr(r, 'game_date', '')) for r in week_df.itertuples(index=False)]
 
     # Load calibration parameters if available
-    calib_path = os.path.join(os.getcwd(), 'calibration', 'params.yaml')
+    calib_path = os.path.join(os.getcwd(), 'calibration', calib_filename)
     a, b = 0.0, 1.0
-    hfa = 2.0
+    hfa = default_hfa
     prob_map = None
     blend = {'low': 3.0, 'high': 7.0}
     enable_calibration = True
@@ -233,7 +325,7 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
         return 1/(1+math.exp(-m/3.5))
 
     # Write a CSV
-    spreads_csv = os.path.join(output_dir, f'spreads_week_{week}.csv')
+    spreads_csv = os.path.join(output_dir, f'spreads_{lg}_week_{week}.csv')
     with open(spreads_csv, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['week', 'home_team', 'away_team', 'projected_spread_raw', 'projected_spread', 'home_win_prob', 'betting_line', 'market_spread', 'market_line', 'edge', 'actionable', 'game_date'])
@@ -290,7 +382,10 @@ def run_spread_model(power_csv: str, schedule_csv: str, week: int, output_dir: s
     return spreads_csv, results_list
 
 
-def fetch_schedule_from_espn(week: int, season: int, output_dir: str) -> Tuple[str, Dict[Tuple[str, str], Dict[str, Any]]]:
+def fetch_schedule_from_espn(week: int,
+                             season: int,
+                             output_dir: str,
+                             league: str) -> Tuple[str, Dict[Tuple[str, str], Dict[str, Any]]]:
     """Fetch Week schedule from ESPN and write a normalized schedule CSV.
 
     Returns path to the CSV with columns: week,home_team,away_team,game_date
@@ -298,10 +393,12 @@ def fetch_schedule_from_espn(week: int, season: int, output_dir: str) -> Tuple[s
     """
     from power_ranking.power_ranking.api.client_factory import get_client
 
-    client = get_client('sync')
+    client = get_client('sync', league=league)
     data = client.get_scoreboard(week=week, season=season)
+    teams = client.get_teams()
 
-    abbr_map = build_team_abbr_map()
+    lg = (league or 'nfl').lower()
+    abbr_map = build_team_abbr_map(lg, teams)
     rows: List[Tuple[int, str, str, str]] = []
     odds_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for event in data.get('events', []) or []:
@@ -321,8 +418,14 @@ def fetch_schedule_from_espn(week: int, season: int, output_dir: str) -> Tuple[s
         # Map to abbreviations
         home_abbr = abbr_map.get(home_name, home_abbr_full)
         away_abbr = abbr_map.get(away_name, away_abbr_full)
+        if lg == 'ncaa':
+            home_label = home_name
+            away_label = away_name
+        else:
+            home_label = home_abbr
+            away_label = away_abbr
         game_date = (event.get('date') or '').split('T')[0]
-        rows.append((week, home_abbr, away_abbr, game_date))
+        rows.append((week, home_label, away_label, game_date))
 
         # Parse odds if present
         odds_list = comp.get('odds') or []
@@ -364,8 +467,13 @@ def fetch_schedule_from_espn(week: int, season: int, output_dir: str) -> Tuple[s
             if market_spread is not None:
                 # Use SpreadCalculator-style formatting
                 try:
-                    from nfl_model.spread_model import SpreadCalculator
-                    market_line = SpreadCalculator(home_field_advantage=2.0).format_spread_as_betting_line(market_spread, home_abbr)
+                    if lg == 'ncaa':
+                        from ncaa_model.spread_model import SpreadCalculator as LeagueSpreadCalculator
+                        default_hfa = 3.0
+                    else:
+                        from nfl_model.spread_model import SpreadCalculator as LeagueSpreadCalculator
+                        default_hfa = 2.0
+                    market_line = LeagueSpreadCalculator(home_field_advantage=default_hfa).format_spread_as_betting_line(market_spread, home_abbr)
                 except Exception:
                     # Manual format
                     if market_spread > 0:
@@ -374,7 +482,7 @@ def fetch_schedule_from_espn(week: int, season: int, output_dir: str) -> Tuple[s
                         market_line = f"{home_abbr} +{abs(market_spread):.1f}"
                     else:
                         market_line = f"{home_abbr} PK"
-        odds_map[(home_abbr, away_abbr)] = {
+        odds_map[(home_label, away_label)] = {
             'market_spread': market_spread,
             'market_line': market_line,
         }
@@ -382,7 +490,7 @@ def fetch_schedule_from_espn(week: int, season: int, output_dir: str) -> Tuple[s
     if not rows:
         raise RuntimeError(f"No games found from ESPN for season {season} week {week}")
 
-    out = os.path.join(output_dir, f'schedule_week_{week}_{season}.csv')
+    out = os.path.join(output_dir, f'schedule_{lg}_week_{week}_{season}.csv')
     with open(out, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['week', 'home_team', 'away_team', 'game_date'])
@@ -395,8 +503,9 @@ def write_summary_csv(output_dir: str,
                       computation: Dict[str, Any],
                       spreads: List[Dict],
                       week: int,
-                      last_n: int) -> str:
-    path = os.path.join(output_dir, f'summary_week_{week}_last{last_n}.csv')
+                      last_n: int,
+                      league: str) -> str:
+    path = os.path.join(output_dir, f'summary_{league.lower()}_week_{week}_last{last_n}.csv')
     with open(path, 'w', newline='') as f:
         writer = csv.writer(f)
         # Header for detailed power rankings
@@ -436,16 +545,19 @@ def write_summary_html(output_dir: str,
                        spreads: List[Dict],
                        week: int,
                        last_n: int,
+                       league: str,
                        params_version: Any | None = None,
                        params_hash: str | None = None) -> str:
-    path = os.path.join(output_dir, f'summary_week_{week}_last{last_n}.html')
+    lg = (league or 'nfl').lower()
+    league_label = 'NCAA' if lg == 'ncaa' else 'NFL'
+    path = os.path.join(output_dir, f'summary_{lg}_week_{week}_last{last_n}.html')
     ts = datetime.now(timezone.utc).isoformat()
     html = [
         "<!DOCTYPE html>",
-        "<html><head><meta charset='utf-8'><title>NFL Projects Summary</title>",
+        f"<html><head><meta charset='utf-8'><title>{league_label} Projects Summary</title>",
         "<style>body{font-family:Arial;margin:20px} table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px} th{background:#f3f3f3}</style>",
         "</head><body>",
-        f"<h1>NFL Projects Summary - Week {week} (Last {last_n} games)</h1>",
+        f"<h1>{league_label} Projects Summary - Week {week} (Last {last_n} games)</h1>",
         f"<p>Generated: {ts} UTC</p>",
         (f"<p>Calibration Params — version: {params_version}, hash: {params_hash}</p>" if (params_version is not None or params_hash is not None) else ""),
         "<h2>Power Rankings (All Teams)</h2>",
@@ -493,33 +605,37 @@ def write_summary_html(output_dir: str,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Power Rankings then NFL Model and summarize results")
-    parser.add_argument('--week', type=int, help='NFL week number (default: autodetect)')
+    parser = argparse.ArgumentParser(description="Run Power Rankings then spread model for the chosen league")
+    parser.add_argument('--league', choices=['nfl', 'ncaa'], default='nfl', help='League to run (default: nfl)')
+    parser.add_argument('--week', type=int, help='Week number to generate outputs for (default: autodetect)')
     parser.add_argument('--last-n', type=int, default=17, help='Most recent games per team (default: 17)')
     parser.add_argument('--schedule', type=str, default='auto', help='Schedule CSV path or "auto" to fetch from ESPN')
     parser.add_argument('--season', type=int, default=datetime.now().year, help='Season year for schedule when using auto')
     parser.add_argument('--output', type=str, default='./output', help='Output directory for artifacts')
     args = parser.parse_args()
 
+    league = args.league.lower()
+    league_label = 'NCAA' if league == 'ncaa' else 'NFL'
+
     output_dir = ensure_abs(args.output)
     os.makedirs(output_dir, exist_ok=True)
 
     # 1) Power rankings
-    pr_csv, rankings, computation = run_power_rankings(args.week, args.last_n, output_dir)
-    print("\n=== Power Rankings (All Teams) ===")
+    pr_csv, rankings, computation, teams = run_power_rankings(args.week, args.last_n, output_dir, league)
+    print(f"\n=== {league_label} Power Rankings (All Teams) ===")
     for i, (_, team_name, score) in enumerate(rankings, 1):
         print(f"{i:2d}. {team_name:<25} {score:6.3f}")
     print(f"Saved power rankings CSV: {pr_csv}")
 
-    # 2) Prepare power rankings for nfl_model (abbreviations), then run spreads
-    pr_abbrev_csv = make_abbrev_power_csv(pr_csv, output_dir)
+    # 2) Prepare power rankings for spread model (abbreviations for NFL, names for NCAA)
+    pr_processed_csv = prepare_power_csv(pr_csv, output_dir, league, teams, computation.get('teams_map'))
     # Determine target week for NFL model schedule use
     target_week = args.week or 1
     # Resolve schedule
     if args.schedule == 'auto':
         try:
-            schedule_csv, odds_map = fetch_schedule_from_espn(week=target_week, season=args.season, output_dir=output_dir)
-            print(f"Fetched schedule from ESPN: {schedule_csv}")
+            schedule_csv, odds_map = fetch_schedule_from_espn(week=target_week, season=args.season, output_dir=output_dir, league=league)
+            print(f"Fetched {league_label} schedule from ESPN: {schedule_csv}")
         except Exception as e:
             raise RuntimeError(f"Failed to auto-fetch schedule: {e}")
     else:
@@ -528,12 +644,12 @@ def main():
             raise FileNotFoundError(f"Schedule CSV not found: {schedule_csv}")
         odds_map = None
 
-    spreads_csv, spreads = run_spread_model(pr_abbrev_csv, schedule_csv, target_week, output_dir, odds_map)
-    print("\n=== Spread Predictions ===")
+    spreads_csv, spreads = run_spread_model(pr_processed_csv, schedule_csv, target_week, output_dir, league, odds_map)
+    print(f"\n=== {league_label} Spread Predictions ===")
     # Determine filter for printing (read policy locally)
     print_filter = None
     try:
-        cal_path = os.path.join(os.getcwd(), 'calibration', 'params.yaml')
+        cal_path = os.path.join(os.getcwd(), 'calibration', 'ncaa_params.yaml' if league == 'ncaa' else 'params.yaml')
         if os.path.exists(cal_path):
             with open(cal_path, 'r') as f:
                 cfg = yaml.safe_load(f) or {}
@@ -567,9 +683,9 @@ def main():
     print(f"Saved spreads CSV: {spreads_csv}")
 
     # 3) Combined summary CSV and HTML
-    summary_csv = write_summary_csv(output_dir, rankings, computation, spreads, target_week, args.last_n)
+    summary_csv = write_summary_csv(output_dir, rankings, computation, spreads, target_week, args.last_n, league)
     # Compute params info for logging and HTML if available
-    calib_path = os.path.join(os.getcwd(), 'calibration', 'params.yaml')
+    calib_path = os.path.join(os.getcwd(), 'calibration', 'ncaa_params.yaml' if league == 'ncaa' else 'params.yaml')
     params_version = None
     params_hash = None
     try:
@@ -581,7 +697,7 @@ def main():
                 params_hash = hashlib.sha256(fb.read()).hexdigest()[:12]
     except Exception:
         pass
-    summary_html = write_summary_html(output_dir, rankings, computation, spreads, target_week, args.last_n,
+    summary_html = write_summary_html(output_dir, rankings, computation, spreads, target_week, args.last_n, league,
                                       params_version=params_version, params_hash=params_hash)
     print("\n=== Summary Artifacts ===")
     print(f"Summary CSV:  {summary_csv}")

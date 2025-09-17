@@ -19,22 +19,54 @@ import csv
 import glob
 import os
 
+from typing import List
 
-def latest_by_season(backtests_dir: str) -> dict:
-    pattern = os.path.join(backtests_dir, 'backtest_winners_*_*.csv')
-    files = sorted(glob.glob(pattern))
+try:  # Allow running as package or standalone script
+    from .backtest_winners import VALID_LEAGUES, parse_league  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - standalone execution
+    from backtest_winners import VALID_LEAGUES, parse_league  # type: ignore[import-not-found]
+
+
+def latest_by_season(backtests_dir: str, league: str) -> dict[int, str]:
+    patterns = [os.path.join(backtests_dir, f'backtest_winners_{league}_*_*.csv')]
+    # Backward compatibility for historical NFL files without explicit league
+    if league == 'nfl':
+        patterns.append(os.path.join(backtests_dir, 'backtest_winners_*_*.csv'))
+
+    files: List[str] = []
+    for pattern in patterns:
+        files.extend(glob.glob(pattern))
+    files = sorted(set(files))
+
     latest: dict[int, str] = {}
     for p in files:
         base = os.path.basename(p)
         parts = base.split('_')
-        # backtest_winners_{season}_{ts}.csv
-        if len(parts) < 4:
+        if len(parts) < 4 or parts[0] != 'backtest' or parts[1] != 'winners':
             continue
+
+        # Determine league/season segments
+        league_part = parts[2]
+        season_idx = 3
+        if league_part not in VALID_LEAGUES:
+            # Legacy format: backtest_winners_{season}_{ts}.csv
+            league_part = 'nfl'
+            season_idx = 2
+
+        if league_part != league:
+            continue
+
+        if len(parts) <= season_idx:
+            continue
+
+        season_part = parts[season_idx]
+        # Remove extension if attached to timestamp
+        season_str = season_part
         try:
-            season = int(parts[2])
-        except Exception:
+            season = int(season_str)
+        except ValueError:
             continue
-        # pick lexicographically latest timestamp per season (files sorted)
+
         latest[season] = p
     return latest
 
@@ -95,7 +127,7 @@ def compute_metrics(csv_path: str) -> dict:
 
 def write_summary(out_path: str, rows: list[dict]) -> str:
     fieldnames = [
-        'season', 'games', 'pushes', 'wins', 'losses', 'accuracy',
+        'league', 'season', 'games', 'pushes', 'wins', 'losses', 'accuracy',
         'cover_yes', 'cover_no', 'cover_push', 'cover_rate'
     ]
     with open(out_path, 'w', newline='') as f:
@@ -109,20 +141,30 @@ def write_summary(out_path: str, rows: list[dict]) -> str:
 def main():
     ap = argparse.ArgumentParser(description='Aggregate season-level winners backtests')
     ap.add_argument('--dir', default='./backtests', help='Backtests directory')
+    ap.add_argument('--league', choices=VALID_LEAGUES, default='nfl', help='League to aggregate (default: nfl)')
     args = ap.parse_args()
+
+    league = parse_league(args.league)
     d = os.path.abspath(os.path.expanduser(args.dir))
     os.makedirs(d, exist_ok=True)
-    latest = latest_by_season(d)
+    latest = latest_by_season(d, league)
     rows = []
     for season, path in latest.items():
         m = compute_metrics(path)
         m['season'] = season
+        m['league'] = league
         rows.append(m)
-    out = os.path.join(d, 'winners_seasons_summary.csv')
+    out = os.path.join(d, f'winners_seasons_summary_{league}.csv')
     write_summary(out, rows)
-    print(f'Wrote {out} with {len(rows)} rows')
+
+    # Maintain legacy filename for NFL to avoid breaking existing workflows
+    if league == 'nfl':
+        legacy_out = os.path.join(d, 'winners_seasons_summary.csv')
+        write_summary(legacy_out, rows)
+        print(f'Wrote {out} and legacy {legacy_out} with {len(rows)} rows')
+    else:
+        print(f'Wrote {out} with {len(rows)} rows')
 
 
 if __name__ == '__main__':
     raise SystemExit(main())
-

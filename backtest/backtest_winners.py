@@ -1,35 +1,36 @@
 #!/usr/bin/env python3
 """
-Backtesting winners (no market odds): Evaluates the model's ability to predict
-game winners using power rankings-derived projected margins.
+Backtesting winners (no market odds) with league support (NFL or NCAA).
 
-Methodology:
-- For season S (default: last completed):
-  - For each week w=1..18:
-    - Train on: season S-1 full + season S weeks < w (STATUS_FINAL only).
-    - Compute power scores with last-N games per team across seasons.
-    - For each game in week w (STATUS_FINAL):
-      - Project margin = (home_power - away_power) + HFA.
-      - Predict winner (home if margin>0, away if margin<0, tie if 0).
-      - Compare to actual winner (home_score - away_score).
-- Outputs:
-  - Per-game CSV with predicted vs actual and correctness.
-  - Summary CSV and HTML with accuracy.
+Methodology mirrors the NFL runner but allows selecting the data source via
+`--league`. For each season/week the script trains on final games prior to the
+week, computes power scores, projects margins, and evaluates winner accuracy.
 
-Usage:
-  python -m backtest.backtest_winners --season 2024 --last-n 17 --hfa 2.0 --output ./backtests
+Usage examples:
+  python -m backtest.backtest_winners --league nfl --season 2024 --last-n 17 --output ./backtests
+  python -m backtest.backtest_winners --league ncaa --season 2024 --last-n 12 --output ./backtests
 """
 
 import argparse
-import os
-import sys
 import csv
-from typing import Dict, List, Tuple, Any
+import os
 from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+import yaml
 
 from power_ranking.power_ranking.api.client_factory import get_client
 from power_ranking.power_ranking.models.power_rankings import PowerRankModel
-import yaml
+
+DEFAULT_HFA: Dict[str, float] = {
+    'nfl': 2.0,
+    'ncaa': 3.0,
+}
+CALIBRATION_FILE: Dict[str, str] = {
+    'nfl': 'params.yaml',
+    'ncaa': 'ncaa_params.yaml',
+}
+VALID_LEAGUES = tuple(DEFAULT_HFA.keys())
 
 
 def ensure_dir(path: str) -> str:
@@ -63,8 +64,8 @@ def extract_games_from_events(events: List[Dict[str, Any]]) -> List[Dict[str, An
                 'event_id': str(event.get('id')),
                 'home_id': str(home.get('team', {}).get('id')),
                 'away_id': str(away.get('team', {}).get('id')),
-                'home_abbr': home.get('team', {}).get('abbreviation'),
-                'away_abbr': away.get('team', {}).get('abbreviation'),
+                'home_abbr': home.get('team', {}).get('abbreviation') or home.get('team', {}).get('displayName'),
+                'away_abbr': away.get('team', {}).get('abbreviation') or away.get('team', {}).get('displayName'),
                 'home_name': home.get('team', {}).get('displayName'),
                 'away_name': away.get('team', {}).get('displayName'),
                 'home_score': int(home.get('score', 0) or 0),
@@ -87,7 +88,6 @@ def build_training_events(prev_events: List[Dict[str, Any]],
             continue
         if e.get('status', {}).get('type', {}).get('name') == 'STATUS_FINAL':
             events.append(e)
-    # Deduplicate
     seen = set()
     unique: List[Dict[str, Any]] = []
     for e in events:
@@ -99,34 +99,46 @@ def build_training_events(prev_events: List[Dict[str, Any]],
     return unique
 
 
+def parse_league(value: str) -> str:
+    league = (value or 'nfl').lower()
+    if league not in VALID_LEAGUES:
+        raise ValueError(f"Unsupported league '{value}'. Choose from {VALID_LEAGUES}.")
+    return league
+
+
 def main():
     parser = argparse.ArgumentParser(description='Backtest model winner predictions (no market odds)')
+    parser.add_argument('--league', choices=VALID_LEAGUES, default='nfl', help='League to run (default: nfl)')
     parser.add_argument('--season', type=int, help='Season year (default: last completed)')
     parser.add_argument('--last-n', type=int, default=17, help='Last N games per team for power (default: 17)')
-    parser.add_argument('--hfa', type=float, default=2.0, help='Home field advantage (default: 2.0)')
+    parser.add_argument('--hfa', type=float, default=None, help='Home field advantage (default: league average)')
     parser.add_argument('--output', type=str, default='./backtests', help='Output directory')
     args = parser.parse_args()
 
-    client = get_client('sync')
+    league = parse_league(args.league)
+    league_label = 'NCAA' if league == 'ncaa' else 'NFL'
+    hfa = args.hfa if args.hfa is not None else DEFAULT_HFA[league]
+
+    client = get_client('sync', league=league)
     if not args.season:
         args.season = client.get_last_completed_season()
 
     out_dir = ensure_dir(args.output)
     ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-    per_game_csv = os.path.join(out_dir, f'backtest_winners_{args.season}_{ts}.csv')
-    summary_csv = os.path.join(out_dir, f'backtest_winners_summary_{args.season}_{ts}.csv')
-    summary_html = os.path.join(out_dir, f'backtest_winners_summary_{args.season}_{ts}.html')
+    per_game_csv = os.path.join(out_dir, f'backtest_winners_{league}_{args.season}_{ts}.csv')
+    summary_csv = os.path.join(out_dir, f'backtest_winners_summary_{league}_{args.season}_{ts}.csv')
+    summary_html = os.path.join(out_dir, f'backtest_winners_summary_{league}_{args.season}_{ts}.html')
 
     teams = client.get_teams()
     curr_events = get_season_events(client, args.season)
     prev_events = get_prev_season_events(client, args.season)
 
-    # Partition by week
     weeks: Dict[int, List[Dict[str, Any]]] = {}
-    for e in curr_events:
-        wk = e.get('week_number') or e.get('week', {}).get('number')
+    for event in curr_events:
+        wk = event.get('week_number') or event.get('week', {}).get('number')
         if isinstance(wk, int):
-            weeks.setdefault(wk, []).append(e)
+            weeks.setdefault(wk, []).append(event)
+    week_numbers = sorted(weeks.keys())
 
     model = PowerRankModel()
     total = 0
@@ -135,18 +147,18 @@ def main():
     covered_yes = 0
     covered_no = 0
     covered_push = 0
-
-    # Collect all game rows for HTML
     all_rows: List[Dict[str, Any]] = []
 
-    # Load margin calibration if present
+    # Load margin calibration if present for league
     a, b = 0.0, 1.0
     blend = {'low': 3.0, 'high': 7.0}
+    calib_file = CALIBRATION_FILE.get(league, 'params.yaml')
     try:
-        with open('calibration/params.yaml', 'r') as _pf:
+        with open(os.path.join('calibration', calib_file), 'r') as _pf:
             cfg = yaml.safe_load(_pf) or {}
-            a = float(cfg.get('calibration', {}).get('margin', {}).get('a', 0.0))
-            b = float(cfg.get('calibration', {}).get('margin', {}).get('b', 1.0))
+            margin_cfg = cfg.get('calibration', {}).get('margin', {})
+            a = float(margin_cfg.get('a', 0.0))
+            b = float(margin_cfg.get('b', 1.0))
             bl = cfg.get('calibration', {}).get('blend', {})
             blend['low'] = float(bl.get('low', 3.0))
             blend['high'] = float(bl.get('high', 7.0))
@@ -154,13 +166,16 @@ def main():
         pass
 
     with open(per_game_csv, 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow([
-            'season', 'week', 'date', 'home', 'away', 'projected_margin_raw', 'projected_margin_cal', 'actual_margin', 'abs_error_raw', 'abs_error_cal', 'away_score', 'home_score', 'final_score', 'covered_predicted',
-            'predicted_winner_side', 'predicted_winner_team', 'actual_winner_side', 'actual_winner_team', 'correct'
+        writer = csv.writer(f)
+        writer.writerow([
+            'league', 'season', 'week', 'date', 'home', 'away', 'projected_margin_raw',
+            'projected_margin_cal', 'actual_margin', 'abs_error_raw', 'abs_error_cal',
+            'away_score', 'home_score', 'final_score', 'covered_predicted',
+            'predicted_winner_side', 'predicted_winner_team', 'actual_winner_side',
+            'actual_winner_team', 'correct'
         ])
 
-        for week in range(1, 19):
+        for week in week_numbers:
             wevents = weeks.get(week, [])
             games = extract_games_from_events(wevents)
             if not games:
@@ -174,10 +189,11 @@ def main():
             for g in games:
                 if g['status'] != 'STATUS_FINAL':
                     continue
-                home_id, away_id = g['home_id'], g['away_id']
+                home_id = g['home_id']
+                away_id = g['away_id']
                 if home_id not in powers or away_id not in powers:
                     continue
-                projected_raw = (powers[home_id] - powers[away_id]) + args.hfa
+                projected_raw = (powers[home_id] - powers[away_id]) + hfa
                 lo, hi = blend['low'], blend['high']
                 cal_lin = a + b * projected_raw
                 mag = abs(projected_raw)
@@ -188,19 +204,29 @@ def main():
                 else:
                     t = (mag - lo) / (hi - lo)
                     projected_cal = (1 - t) * projected_raw + t * cal_lin
+
                 actual_margin = g['home_score'] - g['away_score']
                 predicted_winner = 'home' if projected_raw > 0 else 'away' if projected_raw < 0 else 'push'
                 actual_winner = 'home' if actual_margin > 0 else 'away' if actual_margin < 0 else 'push'
                 predicted_team = g['home_name'] if predicted_winner == 'home' else g['away_name'] if predicted_winner == 'away' else 'TIE'
                 actual_team = g['home_name'] if actual_winner == 'home' else g['away_name'] if actual_winner == 'away' else 'TIE'
 
-                # Coverage of our predicted spread (use calibrated for fairness)
                 if projected_cal > 0:
                     covered = 'Yes' if actual_margin >= projected_cal else 'No'
                 elif projected_cal < 0:
                     covered = 'Yes' if actual_margin <= projected_cal else 'No'
                 else:
                     covered = 'Push'
+
+                is_push_game = abs(actual_margin) < 1e-9
+                is_correct = 1 if predicted_winner == actual_winner else 0
+                if is_push_game:
+                    pushes += 1
+                else:
+                    total += 1
+                    if is_correct:
+                        correct += 1
+
                 if covered == 'Yes':
                     covered_yes += 1
                 elif covered == 'No':
@@ -208,65 +234,58 @@ def main():
                 else:
                     covered_push += 1
 
-                if predicted_winner == 'push' or actual_winner == 'push':
-                    pushes += 1
-                    is_correct = ''
-                else:
-                    is_correct = '1' if predicted_winner == actual_winner else '0'
-                    if is_correct == '1':
-                        correct += 1
-                total += 1
-                w.writerow([
-                    args.season, week, g['date'], g['home_abbr'], g['away_abbr'], f"{projected_raw:+.1f}", f"{projected_cal:+.1f}", f"{actual_margin:+.1f}", f"{abs(projected_raw-actual_margin):.1f}", f"{abs(projected_cal-actual_margin):.1f}", g['away_score'], g['home_score'], f"{g['away_score']}-{g['home_score']}", covered,
-                    predicted_winner, predicted_team, actual_winner, actual_team, is_correct
+                abs_err_raw = abs(actual_margin - projected_raw)
+                abs_err_cal = abs(actual_margin - projected_cal)
+
+                writer.writerow([
+                    league, args.season, week, g['date'], g['home_abbr'], g['away_abbr'],
+                    projected_raw, projected_cal, actual_margin, abs_err_raw, abs_err_cal,
+                    g['away_score'], g['home_score'], f"{g['away_score']} @ {g['home_score']}",
+                    covered, predicted_winner, predicted_team, actual_winner, actual_team,
+                    is_correct
                 ])
+
                 all_rows.append({
-                    'season': args.season,
+                    'league': league,
                     'week': week,
                     'date': g['date'],
                     'home': g['home_abbr'],
                     'away': g['away_abbr'],
                     'home_name': g['home_name'],
                     'away_name': g['away_name'],
+                    'projected_margin': projected_raw,
+                    'actual_margin': actual_margin,
                     'home_score': g['home_score'],
                     'away_score': g['away_score'],
-                    'projected_margin': projected_raw,
-                    'projected_margin_cal': projected_cal,
-                    'actual_margin': actual_margin,
-                    'abs_error_raw': abs(projected_raw-actual_margin),
-                    'abs_error_cal': abs(projected_cal-actual_margin),
-                    'covered': covered,
+                    'covered': covered.lower(),
+                    'predicted_side': predicted_winner,
                     'predicted_team': predicted_team,
                     'actual_team': actual_team,
-                    'correct': is_correct == '1'
+                    'correct': bool(is_correct),
                 })
 
-    # Summary CSV
-    with open(summary_csv, 'w', newline='') as f:
-        w = csv.writer(f)
-        acc = (correct / max(total - pushes, 1)) if total else 0.0
-        cov_total = covered_yes + covered_no
-        cov_rate = (covered_yes / max(cov_total, 1)) if cov_total else 0.0
-        w.writerow(['season', 'games', 'pushes', 'wins', 'losses', 'accuracy', 'covered_yes', 'covered_no', 'covered_push', 'cover_rate'])
-        w.writerow([args.season, total, pushes, correct, max(total - pushes - correct, 0), f"{acc:.3f}", covered_yes, covered_no, covered_push, f"{cov_rate:.3f}"])
+    wins = correct
+    losses = max(total - wins, 0)
+    acc = (wins / max(total, 1)) if total else 0.0
+    cov_total = covered_yes + covered_no
+    cov_rate = (covered_yes / max(cov_total, 1)) if cov_total else 0.0
 
-    # Summary HTML (with full per-game table)
+    with open(summary_csv, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['league', 'season', 'games', 'pushes', 'wins', 'losses', 'accuracy', 'cover_yes', 'cover_no', 'cover_push', 'cover_rate'])
+        writer.writerow([league, args.season, total + pushes, pushes, wins, losses, acc, covered_yes, covered_no, covered_push, cov_rate])
+
+    week_option_html = ''.join(f"<option value='{w}'>{w}</option>" for w in week_numbers)
     with open(summary_html, 'w', encoding='utf-8') as f:
-        acc = (correct / max(total - pushes, 1)) if total else 0.0
         f.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Backtest Winners Summary</title>"
                 "<style>body{font-family:Arial;margin:20px} table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:6px} th{background:#f3f3f3}</style>"
                 "</head><body>")
-        f.write(f"<h1>Backtest Winners Summary - Season {args.season}</h1>")
+        f.write(f"<h1>{league_label} Backtest Winners Summary - Season {args.season}</h1>")
         f.write("<table><tr><th>Games</th><th>Pushes</th><th>Wins</th><th>Losses</th><th>Accuracy</th><th>Covered Yes</th><th>Covered No</th><th>Covered Push</th><th>Cover Rate</th></tr>")
-        cov_total = covered_yes + covered_no
-        cov_rate = (covered_yes / max(cov_total, 1)) if cov_total else 0.0
-        f.write(f"<tr><td>{total}</td><td>{pushes}</td><td>{correct}</td><td>{max(total - pushes - correct, 0)}</td><td>{acc:.3f}</td><td>{covered_yes}</td><td>{covered_no}</td><td>{covered_push}</td><td>{cov_rate:.3f}</td></tr></table>")
-        f.write(f"<p>Per-game CSV: {per_game_csv}<br>Summary CSV: {summary_csv}</p>")
-        # Filters
-        f.write("<h2>Per-Game Results</h2>")
+        f.write(f"<tr><td>{total + pushes}</td><td>{pushes}</td><td>{wins}</td><td>{losses}</td><td>{acc:.3f}</td><td>{covered_yes}</td><td>{covered_no}</td><td>{covered_push}</td><td>{cov_rate:.3f}</td></tr></table>")
+        f.write(f"<p>Per-game CSV: {os.path.basename(per_game_csv)}</p>")
         f.write("<div style='margin:8px 0;'>"
-                "<label>Week: <select id='fWeek'><option value=''>All</option>" +
-                "".join(f"<option value='{w}'>{w}</option>" for w in range(1,19)) + "</select></label>\n"
+                "<label>Week: <select id='fWeek'><option value=''>All</option>" + week_option_html + "</select></label>\n"
                 " <label>Team: <input id='fTeam' placeholder='ABB or Name' /></label>\n"
                 " <label>Team Position: <select id='fPos'><option value=''>Any</option><option value='home'>Home</option><option value='away'>Away</option></select></label>\n"
                 " <label>Predicted Side: <select id='fPred'><option value=''>Any</option><option value='home'>Home</option><option value='away'>Away</option><option value='push'>Push</option></select></label>\n"
@@ -278,52 +297,23 @@ def main():
                 "function filterRows(){var w=document.getElementById('fWeek').value;var t=norm(document.getElementById('fTeam').value);var p=document.getElementById('fPred').value;var pos=document.getElementById('fPos').value;var cov=document.getElementById('fCov').value;var rows=document.querySelectorAll('#results tr');rows.forEach(function(r){var show=true; if(w && r.dataset.week!==w){show=false;} var home=r.dataset.home||''; var away=r.dataset.away||''; var pside=r.dataset.pside||''; var hname=(r.dataset.hname||'').toLowerCase(); var aname=(r.dataset.aname||'').toLowerCase(); var covered=(r.dataset.covered||''); if(t && !matchesTeam(home,away,hname,aname,t,pos)){show=false;} if(p && pside!==p){show=false;} if(cov){ if(cov==='covered' && covered!=='yes') show=false; else if(cov==='not' && covered!=='no') show=false; else if(cov==='push' && covered!=='push') show=false;} r.style.display=show?'':'none';});}\n"
                 "function resetFilters(){document.getElementById('fWeek').value='';document.getElementById('fTeam').value='';document.getElementById('fPred').value='';document.getElementById('fPos').value='';document.getElementById('fCov').value='';filterRows();}\n"
                 "</script>")
-        # Weekly MAE (raw vs calibrated)
-        from collections import defaultdict
-        mae_week = defaultdict(lambda: {'raw': [], 'cal': []})
-        for r in all_rows:
-            mae_week[r['week']]['raw'].append(r['abs_error_raw'])
-            mae_week[r['week']]['cal'].append(r['abs_error_cal'])
-        f.write("<h3>Weekly MAE (Raw vs Calibrated)</h3>")
-        f.write("<table><tr><th>Week</th><th>MAE Raw</th><th>MAE Cal</th></tr>")
-        for wk in sorted(mae_week.keys()):
-            raw = mae_week[wk]['raw']
-            cal = mae_week[wk]['cal']
-            raw_mae = sum(raw)/len(raw) if raw else 0.0
-            cal_mae = sum(cal)/len(cal) if cal else 0.0
-            f.write(f"<tr><td>{wk}</td><td>{raw_mae:.2f}</td><td>{cal_mae:.2f}</td></tr>")
-        f.write("</table>")
-
-        f.write("<table><tr>" \
-                "<th>Week</th><th>Date</th><th>Away</th><th>Home</th>" \
-                "<th>Projected (Raw)</th><th>Projected (Cal)</th><th>Actual Margin</th><th>AbsErr Raw</th><th>AbsErr Cal</th><th>Final Score</th><th>Covered (Predicted)</th>" \
-                "<th>Predicted Winner</th><th>Actual Winner</th><th>Correct</th>" \
-                "</tr><tbody id='results'>")
-        for row in sorted(all_rows, key=lambda r: (r['week'], r['date'])):
-            f.write(f"<tr data-week='{row['week']}' data-home='{row['home']}' data-away='{row['away']}' data-pside='" + ("home" if row['projected_margin']>0 else ("away" if row['projected_margin']<0 else "push")) + f"' data-hname='{row['home_name']}' data-aname='{row['away_name']}' data-covered='{row['covered'].lower()}'>" +
-                    f"<td>{row['week']}</td>" +
-                    f"<td>{row['date']}</td>" +
-                    f"<td>{row['away']}</td>" +
-                    f"<td>{row['home']}</td>" +
-                    f"<td>{row['projected_margin']:+.1f}</td>" +
-                    f"<td>{row['projected_margin_cal']:+.1f}</td>" +
-                    f"<td>{row['actual_margin']:+.1f}</td>" +
-                    f"<td>{row['abs_error_raw']:.1f}</td>" +
-                    f"<td>{row['abs_error_cal']:.1f}</td>" +
-                    f"<td>{row['away_score']}-{row['home_score']}</td>" +
-                    f"<td>{row['covered']}</td>" +
-                    f"<td>{row['predicted_team']}</td>" +
-                    f"<td>{row['actual_team']}</td>" +
-                    f"<td>{'✅' if row['correct'] else '❌'}</td>" +
-                    "</tr>")
+        f.write("<table><tr><th>League</th><th>Week</th><th>Date</th><th>Away</th><th>Home</th><th>Projected Margin (Home)</th><th>Actual Margin</th><th>Final Score</th><th>Covered (Predicted)</th><th>Predicted Winner</th><th>Actual Winner</th><th>Correct</th></tr><tbody id='results'>")
+        for row in all_rows:
+            f.write(
+                f"<tr data-week='{row['week']}' data-home='{row['home']}' data-away='{row['away']}' data-pside='{row['predicted_side']}' "
+                f"data-hname='{row['home_name'].lower() if row['home_name'] else ''}' data-aname='{row['away_name'].lower() if row['away_name'] else ''}' data-covered='{row['covered']}'>"
+                f"<td>{league.upper()}</td><td>{row['week']}</td><td>{row['date']}</td><td>{row['away']}</td><td>{row['home']}</td>"
+                f"<td>{row['projected_margin']:+.1f}</td><td>{row['actual_margin']:+.1f}</td>"
+                f"<td>{row['away_score']} @ {row['home_score']}</td><td>{row['covered'].title()}</td>"
+                f"<td>{row['predicted_team']}</td><td>{row['actual_team']}</td><td>{'Y' if row['correct'] else ''}</td></tr>"
+            )
         f.write("</tbody></table>")
         f.write("</body></html>")
 
-    print(f"Backtest winners complete for {args.season}")
-    print(f"Per-game CSV: {per_game_csv}")
-    print(f"Summary CSV:  {summary_csv}")
-    print(f"Summary HTML: {summary_html}")
+    print(f"Saved per-game backtest CSV: {per_game_csv}")
+    print(f"Saved summary CSV: {summary_csv}")
+    print(f"Saved summary HTML: {summary_html}")
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    raise SystemExit(main())

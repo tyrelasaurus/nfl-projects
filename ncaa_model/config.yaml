@@ -1,0 +1,151 @@
+# NCAA Spread Model Configuration
+# Comprehensive configuration for spread calculation and prediction model
+
+# Spread Model Configuration
+model:
+  # Home field advantage in points
+  home_field_advantage: 3.0
+  
+  # Billy Walters methodology parameters
+  calculation:
+    neutral_spread_precision: 1     # Round to nearest point
+    confidence_level: 0.95
+    
+  # Prediction validation thresholds
+  validation:
+    tolerance_points: 3.0           # Points within 3 are considered "correct"
+    min_sample_size: 10
+    autocorrelation_lag: 1
+    
+  # Betting simulation parameters
+  betting:
+    standard_odds: 1.91             # -110 odds = 1.91 payout
+    unit_size: 1.0
+    max_bet_percentage: 0.05        # 5% of bankroll max
+    
+# Performance Metrics Configuration
+metrics:
+  # Statistical thresholds
+  rmse_target: 10.0                 # Target RMSE in points
+  accuracy_threshold: 0.55          # 55% accuracy target
+  r_squared_threshold: 0.6          # R² target vs Vegas lines
+  
+  # Risk metrics
+  sharpe_ratio_target: 1.0
+  max_drawdown_limit: 0.2           # 20% max drawdown
+  
+  # Bootstrap analysis
+  bootstrap_iterations: 1000
+  confidence_interval: 0.95
+
+# Data Loading Configuration
+data:
+  # File path defaults
+  default_paths:
+    power_rankings: "../power_ranking/output/ncaa_power_rankings_latest.csv"
+    schedule: "../power_ranking/ncaa_schedule_latest.csv"
+  
+  # Data validation
+  validation:
+    required_columns:
+      power_rankings: ["team_name", "power_score", "rank"]
+      schedule: ["home_team", "away_team", "week", "date"]
+    
+    data_types:
+      power_score: "float"
+      week: "int"
+      rank: "int"
+      
+    value_ranges:
+      week: [1, 16]
+      power_score: [-50.0, 50.0]
+      rank: [1, 150]
+
+# Output Configuration  
+output:
+  directory: "output"
+  file_naming:
+    spreads: "ncaa_spreads_week_{week}_{timestamp}.csv"
+    summary: "spread_summary_week_{week}_{timestamp}.csv"
+    include_timestamp: true
+    timestamp_format: "%Y%m%d_%H%M%S"
+    
+  export_formats:
+    csv: true
+    json: false
+    excel: false
+
+# CLI Configuration
+cli:
+  # Argument defaults
+  defaults:
+    verbose: false
+    log_file: null
+    no_fallback: false
+    no_validation: false
+    
+  # Input validation
+  validation:
+    week_range: [1, 16]
+    home_field_range: [-5.0, 10.0]
+    
+  # Help and documentation
+  examples:
+    basic: "--week 1"
+    custom_home_field: "--week 5 --home-field 2.5"
+    verbose: "--week 1 --verbose"
+    with_logging: "--week 1 --log-file ncaa.log"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(levelname)s: %(message)s"
+  file_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  console:
+    enabled: true
+    level: "INFO"
+    
+  file:
+    enabled: false
+    filename: "ncaa_model.log"
+    level: "DEBUG"
+    max_size_mb: 10
+    backup_count: 3
+
+# Environment-specific configurations
+environments:
+  development:
+    logging:
+      level: "DEBUG"
+    model:
+      validation:
+        tolerance_points: 5.0       # More lenient in development
+    
+  production:
+    logging:
+      level: "WARNING"
+      file:
+        enabled: true
+    model:
+      calculation:
+        neutral_spread_precision: 0.5   # More precise in production
+        
+  testing:
+    logging:
+      level: "ERROR"
+    model:
+      validation:
+        min_sample_size: 5          # Smaller sample for tests
+    data:
+      validation:
+        value_ranges:
+          week: [1, 5]              # Limited weeks for testing
+          
+# Feature Flags
+features:
+  enhanced_logging: true
+  data_validation: true
+  fallback_data: true
+  performance_monitoring: false
+  caching: false

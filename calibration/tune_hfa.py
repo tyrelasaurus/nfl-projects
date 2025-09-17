@@ -22,6 +22,8 @@ import pandas as pd
 import numpy as np
 from typing import List
 
+VALID_LEAGUES = ('nfl', 'ncaa')
+
 
 def load_csvs(paths: List[str]) -> pd.DataFrame:
     frames = []
@@ -53,7 +55,16 @@ def sweep_hfa(df: pd.DataFrame, hfa_used: float, hfa_min: float, hfa_max: float,
     return best_hfa, best_mae
 
 
-def update_params_yaml(hfa: float, path: str = 'calibration/params.yaml'):
+def resolve_params_path(league: str | None, override: str | None) -> str:
+    if override:
+        return override
+    lg = (league or 'nfl').lower()
+    if lg not in VALID_LEAGUES:
+        raise ValueError(f"Unsupported league '{league}'. Choose from {VALID_LEAGUES}.")
+    return 'calibration/params.yaml' if lg == 'nfl' else f'calibration/{lg}_params.yaml'
+
+
+def update_params_yaml(hfa: float, path: str):
     data = {}
     if os.path.exists(path):
         with open(path, 'r') as f:
@@ -72,17 +83,19 @@ def main():
     ap.add_argument('--min', type=float, default=1.0, help='Min HFA to test')
     ap.add_argument('--max', type=float, default=3.5, help='Max HFA to test')
     ap.add_argument('--step', type=float, default=0.1, help='Step for HFA sweep')
-    ap.add_argument('--write', action='store_true', help='Write tuned HFA to calibration/params.yaml')
+    ap.add_argument('--league', choices=VALID_LEAGUES, help='League for params convenience (default: nfl)')
+    ap.add_argument('--params-path', help='Explicit params YAML path (overrides --league)')
+    ap.add_argument('--write', action='store_true', help='Write tuned HFA to the resolved params YAML')
     args = ap.parse_args()
 
     df = load_csvs(args.inputs)
     best_hfa, best_mae = sweep_hfa(df, args.hfa_used, args.min, args.max, args.step)
     print(f"Best HFA: {best_hfa:.2f} (MAE={best_mae:.3f})")
     if args.write:
-        update_params_yaml(best_hfa)
-        print("Updated calibration/params.yaml")
+        params_path = resolve_params_path(args.league, args.params_path)
+        update_params_yaml(best_hfa, params_path)
+        print(f"Updated {params_path}")
 
 
 if __name__ == '__main__':
     sys.exit(main())
-
